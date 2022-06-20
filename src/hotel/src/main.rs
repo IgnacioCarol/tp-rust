@@ -6,6 +6,7 @@ use std::str;
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::fs;
+use std::io::Write;
 use std::time;
 use std::time::SystemTime;
 use actix::{Actor, Context, Handler, Message};
@@ -26,7 +27,7 @@ struct Add(i64);
 struct Sub(i64);
 
 struct Hotel {
-    amount: i64
+    amount: i64,
 }
 
 impl Actor for Hotel {
@@ -43,7 +44,7 @@ impl Handler<Add> for Hotel {
 
 impl Handler<Sub> for Hotel {
     type Result = i64;
-        fn handle(&mut self, msg: Sub, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: Sub, _ctx: &mut Self::Context) -> Self::Result {
         self.amount -= msg.0;
         self.amount
     }
@@ -54,7 +55,7 @@ struct HotelSocket {
     transaction_logger: Arc<RwLock<HashMap<String, i64>>>,
     actor: Arc<Hotel>,
     logger: Arc<Semaphore>,
-    starting_time: SystemTime
+    starting_time: SystemTime,
 }
 
 impl HotelSocket {
@@ -62,9 +63,9 @@ impl HotelSocket {
         HotelSocket {
             socket: UdpSocket::bind(ADDR).unwrap(),
             transaction_logger: Arc::new(RwLock::new(HashMap::new())),
-            actor: Arc::new(Hotel{ amount: 0 }),
+            actor: Arc::new(Hotel { amount: 0 }),
             logger: Arc::new(Semaphore::new(1)),
-            starting_time: time::SystemTime::now()
+            starting_time: time::SystemTime::now(),
         }
     }
 
@@ -74,20 +75,20 @@ impl HotelSocket {
             transaction_logger: self.transaction_logger.clone(),
             actor: self.actor.clone(),
             logger: self.logger.clone(),
-            starting_time: self.starting_time.clone()
+            starting_time: self.starting_time.clone(),
         }
     }
     fn responder(&mut self) {
         loop {
             let mut buf = [0; 1024];
-            let (_, from) = self.socket.recv_from(&mut buf).unwrap();
+            let (size, from) = self.socket.recv_from(&mut buf).unwrap();
             let mut c = self.clone();
-            thread::spawn(move || c.process_message(buf, from));
+            let msg = str::from_utf8(&buf[0..size]).unwrap().to_owned().clone();
+            thread::spawn(move || c.process_message(msg, from));
         }
     }
 
-    fn process_message(&mut self, msg: [u8; 1024], address: SocketAddr) {
-        let msg = str::from_utf8(&msg).unwrap();
+    fn process_message(&mut self, msg: String, address: SocketAddr) {
         let m = format!("message received from {} is {}", address, msg);
         self.write_into_logger(&m, STATUS_INFO);
         let (intention, mut information) = msg.split_at(1);
@@ -96,13 +97,13 @@ impl HotelSocket {
             "C" => {
                 self.write_into_logger(&format!("being committed with id {}", information), STATUS_INFO);
                 self.socket.send_to("ok".as_bytes(), address);
-            }, // commit
+            } // commit
             "P" => {
                 let v: Vec<&str> = information.split(" ").collect();
                 let (id, amount) = (v[0], v[1]);
                 self.write_into_logger(&format!("preparing with id {} and amount {}", id, amount), STATUS_INFO);
                 self.socket.send_to("ok".as_bytes(), address);
-            },
+            }
             "A" => {
                 self.write_into_logger(&format!("aborting transaction {}", information), STATUS_INFO);
                 self.socket.send_to("ok".as_bytes(), address);
@@ -116,12 +117,14 @@ impl HotelSocket {
 
     fn write_into_logger(&mut self, data: &str, status: &str) {
         self.logger.acquire();
+        let mut file = fs::OpenOptions::new().write(true).append(true).create(true).open(PATH).unwrap();
         let date = time::SystemTime::now().duration_since(self.starting_time).unwrap();
-        let msg = format!("{}-{}=>{}", date.as_secs(), status, data);
-        fs::write(PATH, msg);
+        let msg = format!("{}-{}=>{}\n", date.as_secs(), status, data);
+        file.write(msg.as_bytes());
         self.logger.release();
     }
 }
+
 fn main() {
     let mut h = HotelSocket::new();
     h.write_into_logger("socket started", STATUS_INFO);
