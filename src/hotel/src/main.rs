@@ -11,8 +11,7 @@ use std::fs;
 use std::io::{Write};
 use std::time;
 use std::time::SystemTime;
-use actix::{Actor, Addr, Context, Handler, Message};
-use std_semaphore::Semaphore;
+use actix::{Actor, Context, Handler, Message, Recipient};
 
 const ADDR: &str = "127.0.0.1:9000";
 const STATUS_INFO: &str = "INFO";
@@ -27,8 +26,48 @@ struct Add(i64);
 #[rtype(result = "i64")]
 struct Sub(i64);
 
+struct Clear();
+impl Message for Clear {
+    type Result = ();
+}
+
+struct Log((String, String));
+
+impl Message for Log {
+    type Result = ();
+}
+
+struct Logger {}
+impl Actor for Logger {
+    type Context = Context<Self>;
+}
+
+impl Handler<Clear> for Logger {
+    type Result = ();
+
+    fn handle(&mut self, _msg: Clear, _ctx: &mut Self::Context) -> Self::Result {}
+}
+
+impl Handler<Clear> for Hotel {
+    type Result = ();
+
+    fn handle(&mut self, _msg: Clear, _ctx: &mut Self::Context) -> Self::Result {}
+}
+
+impl Handler<Log> for Logger {
+    type Result = ();
+
+    fn handle(&mut self, msg: Log, _ctx: &mut Self::Context) -> Self::Result {
+        let mut file = fs::OpenOptions::new().write(true).append(true).create(true).open(PATH).unwrap();
+        let date = Local::now();
+        let msg = format!("{} || {}=> {}\n", date.format("%Y-%m-%d - %H:%M:%S"), msg.0.1, msg.0.0);
+        file.write(msg.as_bytes()).expect("could not use logger");
+    }
+}
+
 struct Hotel {
     amount: i64,
+    logger: Recipient<Log>
 }
 
 impl Actor for Hotel {
@@ -39,6 +78,7 @@ impl Handler<Add> for Hotel {
     type Result = i64;
     fn handle(&mut self, msg: Add, _ctx: &mut Self::Context) -> Self::Result {
         self.amount += msg.0;
+        self.logger.do_send(Log((format!("[HOTEL ACTOR] Amount changed, current is: {}", self.amount), STATUS_INFO.to_string()))).expect("error while sending");
         self.amount
     }
 }
@@ -54,18 +94,18 @@ impl Handler<Sub> for Hotel {
 struct HotelSocket {
     socket: UdpSocket,
     transaction_logger: Arc<RwLock<HashMap<String, (String, i64)>>>,
-    actor: Arc<Addr<Hotel>>,
-    logger: Arc<Semaphore>,
+    actor: Arc<Recipient<Add>>,
+    logger: Arc<Recipient<Log>>,
     starting_time: SystemTime,
 }
 
 impl HotelSocket {
-    fn new(hotel_actor: Addr<Hotel>) -> HotelSocket {
+    fn new(hotel_actor: Recipient<Add>, logger_actor: Recipient<Log>) -> HotelSocket {
         HotelSocket {
             socket: UdpSocket::bind(ADDR).unwrap(),
             transaction_logger: Arc::new(RwLock::new(HashMap::new())),
             actor: Arc::new(hotel_actor),
-            logger: Arc::new(Semaphore::new(1)),
+            logger: Arc::new(logger_actor),
             starting_time: time::SystemTime::now(),
         }
     }
@@ -106,8 +146,11 @@ impl HotelSocket {
                         Some(v) => {
                             if v.0 == "P" {
                                 data.insert(information.to_string(),("C".to_string(), v.1));
+                                self.actor.do_send(Add(v.1)).expect("should be sended to hotel");
+                            } else {
+                                self.write_into_logger(format!("message had the following status: {}, not being commited", v.0).as_str(), STATUS_INFO);
                             }
-                            self.actor.do_send(Add(v.1))
+
                         }
                     }
                 }
@@ -163,21 +206,23 @@ impl HotelSocket {
         }
     }
 
-    fn write_into_logger(&mut self, data: &str, status: &str) {
-        self.logger.acquire();
-        let mut file = fs::OpenOptions::new().write(true).append(true).create(true).open(PATH).unwrap();
-        let date = Local::now();
-        let msg = format!("{} || {}=>{}\n", date.format("%Y-%m-%d - %H:%M:%S"), status, data);
-        file.write(msg.as_bytes()).expect("could not use logger");
-        self.logger.release();
+    fn write_into_logger(&self, data: &str, status: &str) {
+        self.logger.do_send(Log((data.to_string(), status.to_string()))).expect("should be ok");
     }
 }
 
 #[actix_rt::main]
 async fn main() {
-    let actor_hotel = Hotel{amount: 0}.start();
-    let a_h = actor_hotel.clone();
-    let mut h = HotelSocket::new(a_h);
-    h.write_into_logger("socket started", STATUS_INFO);
-    h.responder();
+    let logger = Logger{}.start();
+    let l_1 = logger.clone().recipient();
+    let actor_hotel = Hotel{amount: 0, logger: l_1}.start();
+    let a_h = actor_hotel.clone().recipient();
+    let l_2 = logger.clone().recipient();
+    let mut h = HotelSocket::new(a_h, l_2);
+    thread::spawn(move || h.responder());
+    logger.send(Log(("socket started".to_string(), STATUS_INFO.to_string()))).await.unwrap();
+    loop {
+        logger.send(Clear()).await.unwrap(); // Necessary to make the messages on the thread be processed
+        actor_hotel.send(Clear()).await.unwrap();
+    }
 }
