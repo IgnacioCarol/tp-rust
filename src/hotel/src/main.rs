@@ -9,14 +9,15 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::fs;
 use std::io::{Write};
-use std::time;
-use std::time::SystemTime;
 use actix::{Actor, Context, Handler, Message, Recipient};
+use std_semaphore::Semaphore;
+use rand::{Rng, thread_rng};
 
 const ADDR: &str = "127.0.0.1:9000";
 const STATUS_INFO: &str = "INFO";
 const STATUS_ERROR: &str = "ERROR";
 const PATH: &str = "./hotel.txt";
+const CHANCE_TO_ABORT: usize = 10;
 
 #[derive(Message)]
 #[rtype(result = "i64")]
@@ -78,7 +79,7 @@ impl Handler<Add> for Hotel {
     type Result = i64;
     fn handle(&mut self, msg: Add, _ctx: &mut Self::Context) -> Self::Result {
         self.amount += msg.0;
-        self.logger.do_send(Log((format!("[HOTEL ACTOR] Amount changed, current is: {}", self.amount), STATUS_INFO.to_string()))).expect("error while sending");
+        self.logger.do_send(Log((format!("[HOTEL ACTOR] Amount changed, current is: {}", self.amount), STATUS_INFO.to_string()))).expect("should be sent");
         self.amount
     }
 }
@@ -96,17 +97,17 @@ struct HotelSocket {
     transaction_logger: Arc<RwLock<HashMap<String, (String, i64)>>>,
     actor: Arc<Recipient<Add>>,
     logger: Arc<Recipient<Log>>,
-    starting_time: SystemTime,
+    message_sent: Arc<Semaphore>,
 }
 
 impl HotelSocket {
-    fn new(hotel_actor: Recipient<Add>, logger_actor: Recipient<Log>) -> HotelSocket {
+    fn new(hotel_actor: Recipient<Add>, logger_actor: Recipient<Log>, message_sent: Arc<Semaphore>) -> HotelSocket {
         HotelSocket {
             socket: UdpSocket::bind(ADDR).unwrap(),
             transaction_logger: Arc::new(RwLock::new(HashMap::new())),
             actor: Arc::new(hotel_actor),
             logger: Arc::new(logger_actor),
-            starting_time: time::SystemTime::now(),
+            message_sent,
         }
     }
 
@@ -116,7 +117,7 @@ impl HotelSocket {
             transaction_logger: self.transaction_logger.clone(),
             actor: self.actor.clone(),
             logger: self.logger.clone(),
-            starting_time: self.starting_time.clone(),
+            message_sent: self.message_sent.clone(),
         }
     }
     fn responder(&mut self) {
@@ -146,7 +147,7 @@ impl HotelSocket {
                         Some(v) => {
                             if v.0 == "P" {
                                 data.insert(information.to_string(),("C".to_string(), v.1));
-                                self.actor.do_send(Add(v.1)).expect("should be sended to hotel");
+                                self.send_to_actor(v.1);
                             } else {
                                 self.write_into_logger(format!("message had the following status: {}, not being commited", v.0).as_str(), STATUS_INFO);
                             }
@@ -162,11 +163,19 @@ impl HotelSocket {
             "P" => {
                 let v: Vec<&str> = information.split(" ").collect();
                 let (id, amount) = (v[0], v[1].parse::<i64>().unwrap());
+
+                let mut success = true;
                 if let Ok(mut data) = self.transaction_logger.write() {
                     let value = data.get(id).cloned();
                     match value {
                         None => {
-                            data.insert(id.to_string(), ("P".to_string(), amount));
+                            if thread_rng().gen_range(0, 100) >= 100 - CHANCE_TO_ABORT {
+                                self.write_into_logger(&format!("failing transaction {}", id), STATUS_INFO);
+                                data.insert(id.to_string(), ("C".to_string(), amount));
+                                success = false;
+                            } else {
+                                data.insert(id.to_string(), ("P".to_string(), amount));
+                            }
                         }
                         Some(v) => {
                             if v.0 == "A" {
@@ -175,8 +184,13 @@ impl HotelSocket {
                         }
                     }
                 }
-                self.write_into_logger(&format!("preparing with id {} and amount {}", id, amount), STATUS_INFO);
-                self.socket.send_to("ok".as_bytes(), address).expect("socket broken");
+                if success {
+                    self.write_into_logger(&format!("preparing with id {} and amount {}", id, amount), STATUS_INFO);
+                    self.socket.send_to("ok".as_bytes(), address).expect("socket broken");
+                } else {
+                    self.write_into_logger(&format!("aborting with id {}", id), STATUS_ERROR);
+                    self.socket.send_to("fl".as_bytes(), address).expect("socket broken");
+                }
             }
             "A" => {
                 let mut was_added = true;
@@ -204,10 +218,15 @@ impl HotelSocket {
                 self.socket.send_to("fl".as_bytes(), address).expect("socket broken");
             }
         }
+        self.message_sent.release();
     }
 
     fn write_into_logger(&self, data: &str, status: &str) {
         self.logger.do_send(Log((data.to_string(), status.to_string()))).expect("should be ok");
+    }
+
+    fn send_to_actor(&self, amount_to_add: i64) {
+        self.actor.do_send(Add(amount_to_add)).expect("should be ok");
     }
 }
 
@@ -218,10 +237,13 @@ async fn main() {
     let actor_hotel = Hotel{amount: 0, logger: l_1}.start();
     let a_h = actor_hotel.clone().recipient();
     let l_2 = logger.clone().recipient();
-    let mut h = HotelSocket::new(a_h, l_2);
+    let sem = Arc::new(Semaphore::new(0));
+    let sc = sem.clone();
+    let mut h = HotelSocket::new(a_h, l_2, sc);
     thread::spawn(move || h.responder());
     logger.send(Log(("socket started".to_string(), STATUS_INFO.to_string()))).await.unwrap();
     loop {
+        sem.acquire();
         logger.send(Clear()).await.unwrap(); // Necessary to make the messages on the thread be processed
         actor_hotel.send(Clear()).await.unwrap();
     }
