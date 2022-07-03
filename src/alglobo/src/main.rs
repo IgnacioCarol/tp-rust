@@ -1,6 +1,7 @@
 mod orchestrator;
 
 use std::net::UdpSocket;
+use std::process::exit;
 use std::sync::Barrier;
 use std::sync::{Arc, RwLock};
 use std::{io, thread};
@@ -8,6 +9,10 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
+
+use std::env;
+use std::fs;
+
 
 fn id_to_ctrladdr(id: usize) -> String { "127.0.0.1:1234".to_owned() + &*id.to_string() }
 fn id_to_dataaddr(id: usize) -> String { "127.0.0.1:1235".to_owned() + &*id.to_string() }
@@ -24,6 +29,9 @@ struct AlGlobo {
 
 impl AlGlobo {
 
+    // fn read_dead_letter() {
+    //     fs::read_link();
+    // }
 }
 
 fn get_start_position(mut tracker_reader: BufReader<&File>) -> u64 {
@@ -37,6 +45,24 @@ fn get_start_position(mut tracker_reader: BufReader<&File>) -> u64 {
 }
 
 fn main() {
+
+    // Arguments format:  script_name [--deadletter]
+
+    let args: Vec<String> = env::args().collect();
+    for arg in args{
+
+        println!("{}",arg);
+
+        if arg == "--deadletter" || arg == "-D" {
+            println!("leyendo deadletter..");
+        }
+    }
+
+    exit(0);
+    
+    let mock_msg = "some,0,20,0".to_owned();
+    orchestrator::orchestrate(mock_msg);
+
     let mut tracker_file = File::options().append(false).read(true).write(true).create(true).open(TRACKER);
     let mut tracker_reader;
     let tf;
@@ -70,4 +96,5 @@ fn main() {
         thread::spawn(move || orchestrator::orchestrate(transaction));
     }
     println!("All transactions were processed");
+
 }
