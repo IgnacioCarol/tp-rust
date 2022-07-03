@@ -1,5 +1,6 @@
 mod orchestrator;
 mod leaders;
+mod logger;
 
 use std::net::UdpSocket;
 use std::sync::Barrier;
