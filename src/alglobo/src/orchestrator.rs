@@ -10,6 +10,25 @@ const BANK_ADDR: &str = "127.0.0.1:9001";
 const AER_ADDR: &str = "127.0.0.1:9002";
 const TTL: Duration = Duration::from_secs(2);
 
+use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
+
+const DEADLETTER_FILE: &str = "dead_letter";
+
+pub(crate) fn new_dead(transaction: String){
+
+    let deadletter =  File::options().append(false).read(true).write(true).create(true).open(DEADLETTER_FILE);
+    if let Err(error) = deadletter {
+        println!("Error opening {} {}", DEADLETTER_FILE, error);
+        return;
+    }
+
+    let mut deadletter_writer = BufWriter::new(deadletter.unwrap());
+
+    let _ = deadletter_writer.seek(SeekFrom::End(0));
+    write!(deadletter_writer,"{}\n",transaction).expect("Error al grabar dead transaction");
+}
+
 fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<bool>>, id: String) {
     barrier.wait();
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap(); // With 0 port, OS will give us one
@@ -50,6 +69,10 @@ fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<b
 
 pub fn orchestrate(msg: String) {
     let v: Vec<&str> = msg.trim().split(",").collect();
+    if v.len() != 4 {
+        println!("Error en el formato de la transacción. Ignorando.");
+        return
+    }
     let (id, amount_air, amount_bank, amount_hotel) = (v[0].to_owned(), v[1].parse::<i64>().unwrap(), v[2].parse::<i64>().unwrap(), v[3].parse::<i64>().unwrap());
     let mut barrier_count = 0;
     for value in v {
@@ -75,7 +98,7 @@ pub fn orchestrate(msg: String) {
         v.push(thread::spawn(move || send_req(BANK_ADDR.to_owned(), amount_bank, b, f, i)));
     }
     if amount_air != 0 {
-        println!("sending to bank");
+        println!("sending to air");
         let b = barrier.clone();
         let f = flag.clone();
         let i = id.clone();
@@ -86,7 +109,10 @@ pub fn orchestrate(msg: String) {
     let mut should_continue = false;
     if let Ok(f) = flag.read() {
         if !*f {
-            //Write into deadletter
+            new_dead(msg);
+            println!("{} has failed. Direct to the DEAD LETTER!!!",&id);
+        }else{
+            println!("Todo ok");
         }
         should_continue = *f;
     }
