@@ -50,7 +50,7 @@ fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<b
 
 pub fn orchestrate(msg: String) {
     let v: Vec<&str> = msg.split(",").collect();
-    let (id, amount_bank, amount_hotel, amount_aer) = (v[0].to_owned(), v[1].parse::<i64>().unwrap(), v[2].parse::<i64>().unwrap(), v[3].parse::<i64>().unwrap());
+    let (id, amount_air, amount_bank, amount_hotel) = (v[0].to_owned(), v[1].parse::<i64>().unwrap(), v[2].parse::<i64>().unwrap(), v[3].parse::<i64>().unwrap());
     let mut barrier_count = 0;
     for value in v {
         if value != "0" {
@@ -74,11 +74,12 @@ pub fn orchestrate(msg: String) {
         let i = id.clone();
         v.push(thread::spawn(move || send_req(BANK_ADDR.to_owned(), amount_bank, b, f, i)));
     }
-    if amount_aer != 0 {
+    if amount_air != 0 {
+        println!("sending to bank");
         let b = barrier.clone();
         let f = flag.clone();
         let i = id.clone();
-        v.push(thread::spawn(move || send_req(AER_ADDR.to_owned(), amount_aer, b, f, i)));
+        v.push(thread::spawn(move || send_req(AER_ADDR.to_owned(), amount_air, b, f, i)));
     }
     barrier.wait(); // To start all
     barrier.wait(); // Waiting until all finished preparing
