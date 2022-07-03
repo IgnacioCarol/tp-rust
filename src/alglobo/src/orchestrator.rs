@@ -49,7 +49,7 @@ fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<b
 }
 
 pub fn orchestrate(msg: String) {
-    let v: Vec<&str> = msg.split(",").collect();
+    let v: Vec<&str> = msg.trim().split(",").collect();
     let (id, amount_air, amount_bank, amount_hotel) = (v[0].to_owned(), v[1].parse::<i64>().unwrap(), v[2].parse::<i64>().unwrap(), v[3].parse::<i64>().unwrap());
     let mut barrier_count = 0;
     for value in v {

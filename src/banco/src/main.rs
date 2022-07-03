@@ -11,11 +11,13 @@ use std::fs;
 use std::io::{Write};
 use actix::{Actor, Context, Handler, Message, Recipient};
 use std_semaphore::Semaphore;
+use rand::{Rng, thread_rng};
 
 const ADDR: &str = "127.0.0.1:9001";
 const STATUS_INFO: &str = "INFO";
 const STATUS_ERROR: &str = "ERROR";
 const PATH: &str = "./banco.txt";
+const CHANCE_TO_ABORT: usize = 10;
 
 #[derive(Message)]
 #[rtype(result = "i64")]
@@ -162,11 +164,18 @@ impl BancoSocket {
                 let v: Vec<&str> = information.split(" ").collect();
                 let (id, amount) = (v[0], v[1].parse::<i64>().unwrap());
 
+                let mut success = true;
                 if let Ok(mut data) = self.transaction_logger.write() {
                     let value = data.get(id).cloned();
                     match value {
                         None => {
-                            data.insert(id.to_string(), ("P".to_string(), amount));
+                            if thread_rng().gen_range(0, 100) >= 100 - CHANCE_TO_ABORT {
+                                self.write_into_logger(&format!("failing transaction {}", id), STATUS_INFO);
+                                data.insert(id.to_string(), ("C".to_string(), amount));
+                                success = false;
+                            } else {
+                                data.insert(id.to_string(), ("P".to_string(), amount));
+                            }
                         }
                         Some(v) => {
                             if v.0 == "A" {
@@ -175,8 +184,13 @@ impl BancoSocket {
                         }
                     }
                 }
-                self.write_into_logger(&format!("preparing with id {} and amount {}", id, amount), STATUS_INFO);
-                self.socket.send_to("ok".as_bytes(), address).expect("socket broken");
+                if success {
+                    self.write_into_logger(&format!("preparing with id {} and amount {}", id, amount), STATUS_INFO);
+                    self.socket.send_to("ok".as_bytes(), address).expect("socket broken");
+                } else {
+                    self.write_into_logger(&format!("aborting with id {}", id), STATUS_ERROR);
+                    self.socket.send_to("fl".as_bytes(), address).expect("socket broken");
+                }
             }
             "A" => {
                 let mut was_added = true;
