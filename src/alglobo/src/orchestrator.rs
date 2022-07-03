@@ -2,20 +2,21 @@ use std::net::UdpSocket;
 use std::sync::Barrier;
 use std::sync::{Arc, RwLock};
 use std::thread;
-use std::thread::JoinHandle;
 use std::time::Duration;
+use crate::Logger;
 
 const HOTEL_ADDR: &str = "127.0.0.1:9000";
 const BANK_ADDR: &str = "127.0.0.1:9001";
 const AER_ADDR: &str = "127.0.0.1:9002";
 const TTL: Duration = Duration::from_secs(2);
+const MAX_SIMULATE_WORK: u64 = 2;
 
 fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<bool>>, id: String) {
     barrier.wait();
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap(); // With 0 port, OS will give us one
     let prepare = format!("P {} {}", id, amount);
     let mut continue_sending = true;
-    socket.set_read_timeout(Some(TTL));
+    socket.set_read_timeout(Some(TTL)).expect("why would this fail?");
     let a = addr.clone();
     let _ = socket.send_to(prepare.as_bytes(), a).unwrap();
     let mut buf = [0; 1024];
@@ -48,7 +49,7 @@ fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<b
     barrier.wait();
 }
 
-pub fn orchestrate(msg: String) {
+pub fn orchestrate(msg: String, mut logger: Logger) {
     let v: Vec<&str> = msg.trim().split(",").collect();
     let (id, amount_air, amount_bank, amount_hotel) = (v[0].to_owned(), v[1].parse::<i64>().unwrap(), v[2].parse::<i64>().unwrap(), v[3].parse::<i64>().unwrap());
     let mut barrier_count = 0;
@@ -61,27 +62,29 @@ pub fn orchestrate(msg: String) {
     let flag = Arc::new(RwLock::new(true));
     let mut v = vec!();
     if amount_hotel != 0 {
-        println!("sending to hotel");
+        logger.log_info(format!("[{}] sending to hotel", id));
         let b = barrier.clone();
         let f = flag.clone();
         let i = id.clone();
         v.push(thread::spawn(move || send_req(HOTEL_ADDR.to_owned(), amount_hotel, b, f, i)));
     }
     if amount_bank != 0 {
-        println!("sending to bank");
+        logger.log_info(format!("[{}] sending to bank", id));
         let b = barrier.clone();
         let f = flag.clone();
         let i = id.clone();
         v.push(thread::spawn(move || send_req(BANK_ADDR.to_owned(), amount_bank, b, f, i)));
     }
     if amount_air != 0 {
-        println!("sending to bank");
+        logger.log_info(format!("[{}] sending to aer", id));
         let b = barrier.clone();
         let f = flag.clone();
         let i = id.clone();
         v.push(thread::spawn(move || send_req(AER_ADDR.to_owned(), amount_air, b, f, i)));
     }
     barrier.wait(); // To start all
+    logger.log_info(format!("[{}] feels sleepy", id));
+    thread::sleep(Duration::from_secs(MAX_SIMULATE_WORK));
     barrier.wait(); // Waiting until all finished preparing
     let mut should_continue = false;
     if let Ok(f) = flag.read() {
@@ -92,9 +95,11 @@ pub fn orchestrate(msg: String) {
     }
     if should_continue {
         barrier.wait(); // commit
+    } else {
+        logger.log(format!("[{}] i failed", id).as_str(), "ERROR");
     }
     for t in v {
-        t.join();
+        t.join().expect("will not fail");
     } //Ending method
     //write in logger
 }
