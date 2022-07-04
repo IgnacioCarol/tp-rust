@@ -2,7 +2,7 @@
 
 
 run:
-	cargo run
+	cargo run -- --id 1
 
 deadletter:
 	cargo run -- -D

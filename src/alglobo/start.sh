@@ -30,4 +30,4 @@ echo "Hotel  pid: $HOTEL"
 
 ###
 cd ../alglobo/
-echo "$BANK,$AIRLINE,$HOTEL" > "proccess.pid"
+echo "$BANK,$AIRLINE,$HOTEL" > "processes.pid"

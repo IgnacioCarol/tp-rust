@@ -1,11 +1,11 @@
 #!/bin/bash
 
-PIDS=`cat proccess.pid`
+PIDS=`cat processes.pid`
 echo "Pids: $PIDS"
 
-BANK=`sed 's/\(.*\),.*,.*/\1/g' proccess.pid`
-AIRLINE=`sed 's/.*,\(.*\),.*/\1/g' proccess.pid`
-HOTEL=`sed 's/.*,.*,\(.*\)/\1/g' proccess.pid`
+BANK=`sed 's/\(.*\),.*,.*/\1/g' processes.pid`
+AIRLINE=`sed 's/.*,\(.*\),.*/\1/g' processes.pid`
+HOTEL=`sed 's/.*,.*,\(.*\)/\1/g' processes.pid`
 
 echo "Killing Bank.."
 kill $BANK
