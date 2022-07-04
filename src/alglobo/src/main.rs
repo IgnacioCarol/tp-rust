@@ -2,6 +2,7 @@ mod orchestrator;
 mod leaders;
 mod logger;
 
+use core::panic;
 use std::{env, io, thread};
 use std::time::Duration;
 use std::fs::File;
@@ -44,17 +45,19 @@ fn read_dead_letter() {
     let mut seek = 0;
 
     let mut line = "".to_string();
-    let mut dead_transaction;
-    let mut state;
+    let mut dead_transaction = String::new();
+    let mut state= String::new();
 
     let mut input_string = String::new();
     let mut skipped = false;
 
     let mut read_bytes = deadletter_reader.read_line(&mut line).unwrap();
     while read_bytes > 0 && !skipped {
-
-        state = line[read_bytes-2..read_bytes-1].to_string();
-        dead_transaction = line[0..read_bytes-3].to_string();
+        
+        if read_bytes >= 3 {
+            state = line[read_bytes-2..read_bytes-1].to_string();
+            dead_transaction = line[0..read_bytes-3].to_string();
+        }
 
         if state == "F" {
 
@@ -77,6 +80,7 @@ fn read_dead_letter() {
 
                         deadletter_writer.seek(SeekFrom::Start(seek)).expect("should move");
                         write!(deadletter_writer,"{},P\n",dead_transaction).unwrap();
+                        deadletter_writer.flush().unwrap();
                         break;
                     },
                     "n" => {
@@ -87,6 +91,7 @@ fn read_dead_letter() {
                         println!("Removing transaction..");
                         deadletter_writer.seek(SeekFrom::Start(seek)).expect("should move");
                         write!(deadletter_writer,"{},R\n",dead_transaction).unwrap();
+                        deadletter_writer.flush().unwrap();
                         break;
                     },
                     "e" => {
@@ -100,8 +105,11 @@ fn read_dead_letter() {
                 }
             }
         }
+
         seek += read_bytes as u64;
         line.clear();
+        state.clear();
+        dead_transaction.clear();
         read_bytes = deadletter_reader.read_line(&mut line).unwrap();
     }
 }
@@ -110,20 +118,26 @@ fn main() {
     // Arguments format:  script_name [--deadletter | -D]
     let mut id: usize = 100;
     let args: Vec<String> = env::args().collect();
-    for arg in args{
-        if arg == "--deadletter" || arg == "-D" {
+    for i in 0..args.len(){
+        if args[i] == "--deadletter" || args[i] == "-D" {
             read_dead_letter();
             return;
         }
-        if arg == "--id" || arg == "-id" {
-            id = arg.parse().unwrap(); // if this panic nmf
-            if id > 9 {
-                panic!("Well someone wants to break me");
+        if args[i] == "--id" || args[i] == "-id" {
+            if i+1 < args.len(){
+                id = args[i+1].parse().unwrap(); // if this panic nmf
+                if id > 9 {
+                    panic!("Well someone wants to break me");
+                }
+            }else{
+                panic!("Is required a value for --id");
             }
+            
         }
     }
+    
     if id == 100 {
-        panic!("argument not sent")
+        panic!("argument not sent");
     }
     let mut logger = Logger::new();
     let l = logger.clone();
@@ -165,7 +179,7 @@ fn main() {
                 tracker_writer.seek(SeekFrom::Start(0)).unwrap();
                 write!(tracker_writer, "{}", total_bytes_read).unwrap();
                 let cl = logger.clone();
-                th.push(thread::spawn(move || orchestrator::orchestrate(transaction, cl)));
+                th.push(thread::spawn(move || orchestrator::orchestrate(transaction.trim().to_string(), cl)));
                 thread::sleep(Duration::from_secs(TIME_TO_SLEEP));
             }
             for t in th {

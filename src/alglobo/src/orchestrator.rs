@@ -69,7 +69,7 @@ fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<b
 }
 
 pub fn orchestrate(msg: String, mut logger: Logger) {
-    let v: Vec<&str> = msg.trim().split(",").collect();
+    let v: Vec<&str> = msg.split(",").collect();
     if v.len() != 4 {
         logger.log(format!("Error in format for message {}", v[0]).as_str(), "ERROR");
         return
