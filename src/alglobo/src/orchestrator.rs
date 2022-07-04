@@ -2,7 +2,7 @@ use std::net::UdpSocket;
 use std::sync::Barrier;
 use std::sync::{Arc, RwLock};
 use std::thread;
-use std::thread::JoinHandle;
+//use std::thread::JoinHandle;
 use std::time::Duration;
 
 const HOTEL_ADDR: &str = "127.0.0.1:9000";
@@ -11,7 +11,7 @@ const AER_ADDR: &str = "127.0.0.1:9002";
 const TTL: Duration = Duration::from_secs(2);
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
+use std::io::{BufWriter, Seek, SeekFrom, Write};
 
 const DEADLETTER_FILE: &str = "dead_letter";
 
@@ -26,7 +26,7 @@ pub(crate) fn new_dead(transaction: String){
     let mut deadletter_writer = BufWriter::new(deadletter.unwrap());
 
     let _ = deadletter_writer.seek(SeekFrom::End(0));
-    write!(deadletter_writer,"{}\n",transaction).expect("Error al grabar dead transaction");
+    write!(deadletter_writer,"{},F\n",transaction).expect("Error al grabar dead transaction");
 }
 
 fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<bool>>, id: String) {
@@ -34,7 +34,7 @@ fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<b
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap(); // With 0 port, OS will give us one
     let prepare = format!("P {} {}", id, amount);
     let mut continue_sending = true;
-    socket.set_read_timeout(Some(TTL));
+    let _ = socket.set_read_timeout(Some(TTL));
     let a = addr.clone();
     let _ = socket.send_to(prepare.as_bytes(), a).unwrap();
     let mut buf = [0; 1024];
@@ -120,7 +120,7 @@ pub fn orchestrate(msg: String) {
         barrier.wait(); // commit
     }
     for t in v {
-        t.join();
+        let _ = t.join();
     } //Ending method
     //write in logger
 }

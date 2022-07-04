@@ -45,56 +45,79 @@ fn get_start_position(mut tracker_reader: BufReader<&File>) -> u64 {
 // 3. En el caso que decidamos no limpiar las transacciones (1.) entonces podemos armar un sistema de punteros igual que para la lectura de la cola de transacciones .
 fn read_dead_letter() {
 
-    let deadletter = File::open(DEADLETTER_FILE);
-    if let Err(error) = deadletter {
-        println!("Error opening {} {}", DEADLETTER_FILE, error);
+    let deadletter = File::options().append(false).read(true).write(true).create(true).open(DEADLETTER_FILE);
+    let mut deadletter_reader;
+    let deadletter_c;
+    if let Ok(ref file) = deadletter {
+        deadletter_reader = BufReader::new(file);
+        deadletter_c  = file.try_clone().unwrap();
+    }else {
+        println!("Error opening {}", DEADLETTER_FILE);
         return;
     }
 
-    let mut deadletter_reader = BufReader::new(deadletter.unwrap());
-    let mut dead_transaction = "".to_string();
+    let mut deadletter_writer = BufWriter::new(&deadletter_c);
+    let mut seek = 0;
+
+    let mut line = "".to_string();
+    let mut dead_transaction;
+    let mut state;
 
     let mut input_string = String::new();
     let mut skipped = false;
 
-    let mut read_bytes = deadletter_reader.read_line(&mut dead_transaction).unwrap();
+    let mut read_bytes = deadletter_reader.read_line(&mut line).unwrap();
     while read_bytes > 0 && !skipped {
 
-        print!("Transacción => {} | ",&dead_transaction.trim_end());
-        print!("Select an option: [P]roccess - [I]gnore - [S]kip: ");
-        io::stdout().flush().unwrap();
+        state = line[read_bytes-2..read_bytes-1].to_string();
+        dead_transaction = line[0..read_bytes-3].to_string();
 
-        loop {
-              // Input from user
-              input_string.clear();
-              stdin().read_line(&mut input_string)
-              .ok()
-              .expect("Failed to read line");
+        if state == "F" {
 
-            match (&input_string.to_lowercase()).as_str().trim_end() {
+            print!("Transacción with state {} => {} | ", state, dead_transaction);
+            print!("Select an option: [P]rocess - [N]ext - [R]emove - [E]xit: ");
+            io::stdout().flush().unwrap();
 
-                "p" => {
-                    println!("Processing..");
-                    orchestrator::orchestrate((&dead_transaction.trim_end()).to_string());
-                    break;
-                },
-                "i" => {
-                    println!("Ignoring transaction..");
-                    break;
-                },
-                "e" => {
-                    println!("Exiting the process of deadletter..");
-                    skipped = true;
-                    break;
-                },
-                &_ => {
-                    println!("{} is not valid. Only P/I/S keys are valid.. ",(&input_string.to_lowercase()).as_str().trim_end() );
+            loop {
+                // Input from user
+                input_string.clear();
+                stdin().read_line(&mut input_string)
+                .ok()
+                .expect("Failed to read line");
+  
+              match (&input_string.to_lowercase()).as_str().trim_end() {
+                    "p" => {
+                        println!("Processing..");
+                        orchestrator::orchestrate((&dead_transaction).to_string());
+    
+                        deadletter_writer.seek(SeekFrom::Start(seek));
+                        write!(deadletter_writer,"{},P\n",dead_transaction);
+                        break;
+                    },
+                    "n" => {
+                        println!("Ignoring transaction..");
+                        break;
+                    },
+                    "r" => {
+                        println!("Removing transaction..");
+                        deadletter_writer.seek(SeekFrom::Start(seek));
+                        write!(deadletter_writer,"{},R\n",dead_transaction);
+                        break;
+                    },
+                    "e" => {
+                        println!("Exiting the process of deadletter..");
+                        skipped = true;
+                        break;
+                    },
+                    &_ => {
+                        println!("{} is not valid. Only P/N/R/E keys are valid.. ",(&input_string.to_lowercase()).as_str().trim_end() );
+                    }
                 }
             }
         }
-  
-        dead_transaction.clear();
-        read_bytes = deadletter_reader.read_line(&mut dead_transaction).unwrap();
+        seek += read_bytes as u64;
+        line.clear();
+        read_bytes = deadletter_reader.read_line(&mut line).unwrap();
     }
 }
 
@@ -110,11 +133,12 @@ fn main() {
         }
     }
 
-    let mock_msg = "some,0,20,0".to_owned();
-    orchestrator::orchestrate(mock_msg);
+    //let mock_msg = "some,0,20,0".to_owned();
+    //orchestrator::orchestrate(mock_msg);
+    let mut threads = vec![];
 
-    let mut tracker_file = File::options().append(false).read(true).write(true).create(true).open(TRACKER);
-    let mut tracker_reader;
+    let tracker_file = File::options().append(false).read(true).write(true).create(true).open(TRACKER);
+    let tracker_reader;
     let tf;
     if let Ok(ref file) = tracker_file {
         tracker_reader = BufReader::new(file);
@@ -124,7 +148,7 @@ fn main() {
         return;
     }
     let mut tracker_writer = BufWriter::new(&tf);
-    let mut pointer = get_start_position(tracker_reader);
+    let pointer = 0;//get_start_position(tracker_reader);
 
     let transactions_file = File::open(TRANSACTIONS_FILE);
     if let Err(error) = transactions_file {
@@ -143,8 +167,12 @@ fn main() {
         total_bytes_read += bytes_read;
         tracker_writer.seek(SeekFrom::Start(0));
         write!(tracker_writer, "{}", total_bytes_read);
-        println!("{}",&transaction);
-        thread::spawn(move || orchestrator::orchestrate(transaction));
+        let t = thread::spawn(move || orchestrator::orchestrate(transaction.trim_end().to_string().to_owned()));
+        threads.push(t);
+    }
+
+    for t in threads{
+        t.join();
     }
     println!("All transactions were processed");
 
