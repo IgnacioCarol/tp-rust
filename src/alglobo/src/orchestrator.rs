@@ -6,7 +6,10 @@ use std::sync::Barrier;
 use std::thread;
 use std::time::Duration;
 
-use crate::Logger;
+use std_semaphore::Semaphore;
+
+use crate::recovery::mark_transaction;
+use crate::{Logger, recovery};
 
 const HOTEL_ADDR: &str = "127.0.0.1:9000";
 const BANK_ADDR: &str = "127.0.0.1:9001";
@@ -16,7 +19,7 @@ const MAX_SIMULATE_WORK: u64 = 2;
 
 const DEADLETTER_FILE: &str = "dead_letter";
 
-fn new_dead(transaction: String){
+pub(crate) fn new_dead(transaction: String){
 
     let deadletter =  File::options().append(false).read(true).write(true).create(true).open(DEADLETTER_FILE);
     if let Err(error) = deadletter {
@@ -68,12 +71,18 @@ fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<b
     barrier.wait();
 }
 
-pub fn orchestrate(msg: String, mut logger: Logger) {
+pub fn orchestrate(msg: String, mut logger: Logger, recover_sem : Arc<Semaphore>) {
     let v: Vec<&str> = msg.split(",").collect();
     if v.len() != 4 {
         logger.log(format!("Error in format for message {}", v[0]).as_str(), "ERROR");
         return
     }
+
+    // Log start operation
+    recover_sem.acquire();
+    recovery::mark_transaction(&msg,"--");
+    recover_sem.release();
+    
     let (id, amount_air, amount_bank, amount_hotel) = (v[0].to_owned(), v[1].parse::<i64>().unwrap(), v[2].parse::<i64>().unwrap(), v[3].parse::<i64>().unwrap());
     let mut barrier_count = 0;
     for value in v {
@@ -112,15 +121,24 @@ pub fn orchestrate(msg: String, mut logger: Logger) {
     let mut should_continue = false;
     if let Ok(f) = flag.read() {
         if !*f {
-            new_dead(msg);
+            new_dead(msg.to_string());
             println!("{} has failed. Direct to the DEAD LETTER!!!",&id);
+
+            recover_sem.acquire();
+            mark_transaction(&msg,"DL");
+            recover_sem.release();
         }else{
             println!("Todo ok");
         }
         should_continue = *f;
     }
     if should_continue {
+        
         barrier.wait(); // commit
+
+        recover_sem.acquire();
+        mark_transaction(&msg,"OK");
+        recover_sem.release();
     } else {
         logger.log(format!("[{}] i failed", id).as_str(), "ERROR");
     }
