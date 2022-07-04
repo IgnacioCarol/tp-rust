@@ -5,7 +5,6 @@ use chrono::Local;
 use std_semaphore::Semaphore;
 
 const PATH: &str = "logger.txt";
-const PATH_DEADLETTER: &str = "cosito.txt";
 
 pub struct Logger {
     path: String,
@@ -47,12 +46,5 @@ impl Logger {
     }
     pub fn log_info(&mut self, msg: String) {
         self.log(msg.as_str(), "INFO");
-    }
-
-    pub fn log_into_deadletter(&mut self, msg: &str) {
-        self.sem.acquire();
-        let mut file = fs::OpenOptions::new().write(true).append(true).create(true).open(PATH_DEADLETTER).unwrap();
-        file.write(msg.as_bytes()).expect("could not use logger");
-        self.sem.release();
     }
 }

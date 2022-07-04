@@ -1,8 +1,11 @@
+use std::fs::File;
+use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::net::UdpSocket;
-use std::sync::Barrier;
 use std::sync::{Arc, RwLock};
+use std::sync::Barrier;
 use std::thread;
 use std::time::Duration;
+
 use crate::Logger;
 
 const HOTEL_ADDR: &str = "127.0.0.1:9000";
@@ -10,6 +13,22 @@ const BANK_ADDR: &str = "127.0.0.1:9001";
 const AER_ADDR: &str = "127.0.0.1:9002";
 const TTL: Duration = Duration::from_secs(2);
 const MAX_SIMULATE_WORK: u64 = 2;
+
+const DEADLETTER_FILE: &str = "dead_letter";
+
+fn new_dead(transaction: String){
+
+    let deadletter =  File::options().append(false).read(true).write(true).create(true).open(DEADLETTER_FILE);
+    if let Err(error) = deadletter {
+        println!("Error opening {} {}", DEADLETTER_FILE, error);
+        return;
+    }
+
+    let mut deadletter_writer = BufWriter::new(deadletter.unwrap());
+
+    let _ = deadletter_writer.seek(SeekFrom::End(0));
+    write!(deadletter_writer,"{},F\n",transaction).expect("Error al grabar dead transaction");
+}
 
 fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<bool>>, id: String) {
     barrier.wait();
@@ -51,6 +70,10 @@ fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<b
 
 pub fn orchestrate(msg: String, mut logger: Logger) {
     let v: Vec<&str> = msg.trim().split(",").collect();
+    if v.len() != 4 {
+        logger.log(format!("Error in format for message {}", v[0]).as_str(), "ERROR");
+        return
+    }
     let (id, amount_air, amount_bank, amount_hotel) = (v[0].to_owned(), v[1].parse::<i64>().unwrap(), v[2].parse::<i64>().unwrap(), v[3].parse::<i64>().unwrap());
     let mut barrier_count = 0;
     for value in v {
@@ -89,7 +112,10 @@ pub fn orchestrate(msg: String, mut logger: Logger) {
     let mut should_continue = false;
     if let Ok(f) = flag.read() {
         if !*f {
-            //Write into deadletter
+            new_dead(msg);
+            println!("{} has failed. Direct to the DEAD LETTER!!!",&id);
+        }else{
+            println!("Todo ok");
         }
         should_continue = *f;
     }
@@ -101,5 +127,5 @@ pub fn orchestrate(msg: String, mut logger: Logger) {
     for t in v {
         t.join().expect("will not fail");
     } //Ending method
-    //write in logger
+    logger.log_info(format!("[{}] finished orchestrate", id));
 }

@@ -97,7 +97,7 @@ impl LeaderElection {
         if !*got_ok.unwrap().0 {
             self.make_me_leader()
         } else {
-            self.leader_id.1.wait_while(self.leader_id.0.lock().unwrap(), |leader_id| leader_id.is_none()).unwrap();
+            let _ = self.leader_id.1.wait_while(self.leader_id.0.lock().unwrap(), |leader_id| leader_id.is_none()).unwrap();
         }
     }
 

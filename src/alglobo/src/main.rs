@@ -2,11 +2,10 @@ mod orchestrator;
 mod leaders;
 mod logger;
 
-use std::{thread};
-use std::env::args;
+use std::{env, io, thread};
 use std::time::Duration;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, stdin, Write};
 use crate::leaders::get_leader_election;
 use crate::logger::Logger;
 
@@ -14,6 +13,8 @@ const TRACKER: &str = "tracker";
 const STATUS_INFO: &str = "INFO";
 const STATUS_ERROR: &str = "ERROR";
 const TIME_TO_SLEEP: u64 = 1;
+const TRANSACTIONS_FILE: &str = "transactions";
+const DEADLETTER_FILE: &str = "dead_letter";
 
 fn get_start_position(mut tracker_reader: BufReader<&File>) -> u64 {
     let mut start_position = 0;
@@ -25,10 +26,104 @@ fn get_start_position(mut tracker_reader: BufReader<&File>) -> u64 {
     start_position
 }
 
+fn read_dead_letter() {
+    let mut logger = Logger::new();
+
+    let deadletter = File::options().append(false).read(true).write(true).create(true).open(DEADLETTER_FILE);
+    let mut deadletter_reader;
+    let deadletter_c;
+    if let Ok(ref file) = deadletter {
+        deadletter_reader = BufReader::new(file);
+        deadletter_c  = file.try_clone().unwrap();
+    }else {
+        logger.log(format!("Error opening {}", DEADLETTER_FILE).as_str(), "ERROR");
+        return;
+    }
+
+    let mut deadletter_writer = BufWriter::new(&deadletter_c);
+    let mut seek = 0;
+
+    let mut line = "".to_string();
+    let mut dead_transaction;
+    let mut state;
+
+    let mut input_string = String::new();
+    let mut skipped = false;
+
+    let mut read_bytes = deadletter_reader.read_line(&mut line).unwrap();
+    while read_bytes > 0 && !skipped {
+
+        state = line[read_bytes-2..read_bytes-1].to_string();
+        dead_transaction = line[0..read_bytes-3].to_string();
+
+        if state == "F" {
+
+            print!("Transacción with state {} => {} | ", state, dead_transaction);
+            print!("Select an option: [P]rocess - [N]ext - [R]emove - [E]xit: ");
+            io::stdout().flush().unwrap();
+
+            loop {
+                // Input from user
+                input_string.clear();
+                stdin().read_line(&mut input_string)
+                .ok()
+                .expect("Failed to read line");
+
+              match (&input_string.to_lowercase()).as_str().trim_end() {
+                    "p" => {
+                        println!("Processing..");
+                        let le = logger.clone();
+                        orchestrator::orchestrate((&dead_transaction).to_string(), le);
+
+                        deadletter_writer.seek(SeekFrom::Start(seek)).expect("should move");
+                        write!(deadletter_writer,"{},P\n",dead_transaction).unwrap();
+                        break;
+                    },
+                    "n" => {
+                        println!("Ignoring transaction..");
+                        break;
+                    },
+                    "r" => {
+                        println!("Removing transaction..");
+                        deadletter_writer.seek(SeekFrom::Start(seek)).expect("should move");
+                        write!(deadletter_writer,"{},R\n",dead_transaction).unwrap();
+                        break;
+                    },
+                    "e" => {
+                        println!("Exiting the process of deadletter..");
+                        skipped = true;
+                        break;
+                    },
+                    &_ => {
+                        println!("{} is not valid. Only P/N/R/E keys are valid.. ",(&input_string.to_lowercase()).as_str().trim_end() );
+                    }
+                }
+            }
+        }
+        seek += read_bytes as u64;
+        line.clear();
+        read_bytes = deadletter_reader.read_line(&mut line).unwrap();
+    }
+}
+
 fn main() {
-    let id: usize = args().nth(1).unwrap_or("0".to_string()).parse().unwrap(); // if this panic nmf
-    if id > 9 {
-        panic!("Well someone wants to break me");
+    // Arguments format:  script_name [--deadletter | -D]
+    let mut id: usize = 100;
+    let args: Vec<String> = env::args().collect();
+    for arg in args{
+        if arg == "--deadletter" || arg == "-D" {
+            read_dead_letter();
+            return;
+        }
+        if arg == "--id" || arg == "-id" {
+            id = arg.parse().unwrap(); // if this panic nmf
+            if id > 9 {
+                panic!("Well someone wants to break me");
+            }
+        }
+    }
+    if id == 100 {
+        panic!("argument not sent")
     }
     let mut logger = Logger::new();
     let l = logger.clone();
