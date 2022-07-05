@@ -1,13 +1,13 @@
-use std::fs::File;
-use std::io::{BufWriter, Seek, SeekFrom, Write};
+
 use std::net::UdpSocket;
 use std::sync::{Arc, RwLock};
 use std::sync::Barrier;
 use std::{thread, time};
 use std::time::Duration;
-
+use rand::Rng;
 use std_semaphore::Semaphore;
 
+use crate::dead_letter::new_dead;
 use crate::recovery::mark_transaction;
 use crate::{Logger, recovery};
 
@@ -15,23 +15,7 @@ const HOTEL_ADDR: &str = "127.0.0.1:9000";
 const BANK_ADDR: &str = "127.0.0.1:9001";
 const AER_ADDR: &str = "127.0.0.1:9002";
 const TTL: Duration = Duration::from_secs(2);
-const MAX_SIMULATE_WORK: u64 = 2;
-
-const DEADLETTER_FILE: &str = "dead_letter";
-
-pub(crate) fn new_dead(transaction: String){
-
-    let deadletter =  File::options().append(false).read(true).write(true).create(true).open(DEADLETTER_FILE);
-    if let Err(error) = deadletter {
-        println!("Error opening {} {}", DEADLETTER_FILE, error);
-        return;
-    }
-
-    let mut deadletter_writer = BufWriter::new(deadletter.unwrap());
-
-    let _ = deadletter_writer.seek(SeekFrom::End(0));
-    write!(deadletter_writer,"{},F\n",transaction).expect("Error al grabar dead transaction");
-}
+const MAX_SIMULATE_WORK: u64 = 3000;
 
 fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<bool>>, id: String) {
     barrier.wait();
@@ -117,8 +101,11 @@ pub fn orchestrate(msg: String, mut logger: Logger, recover_sem : Arc<Semaphore>
         v.push(thread::spawn(move || send_req(AER_ADDR.to_owned(), amount_air, b, f, i)));
     }
     barrier.wait(); // To start all
+
     logger.log_info(format!("[{}] feels sleepy", id));
-    thread::sleep(Duration::from_secs(MAX_SIMULATE_WORK));
+    let rand_work_time = rand::thread_rng().gen_range(1000,MAX_SIMULATE_WORK);
+    thread::sleep(Duration::from_millis(rand_work_time));
+
     barrier.wait(); // Waiting until all finished preparing
     let mut should_continue = false;
     if let Ok(f) = flag.read() {
@@ -154,9 +141,10 @@ pub fn orchestrate(msg: String, mut logger: Logger, recover_sem : Arc<Semaphore>
     
     if let Ok(mut a) = time_avg.write() {
         a.0 += 1;
-        a.1 += elapsed.as_secs();
-
-        logger.log_info(format!("{}/{} - Average Total Time: {:.2?}",a.1,a.0,a.1/a.0));        
+        a.1 += elapsed.as_millis() as u64;
+        let calc1 = a.1 as f64 /1000 as f64;
+        let calc2 = calc1/((a.0) as f64);
+        logger.log_info(format!("Total time: {:.2}s - Transactions: {} - Average Time: {:.2}s",calc1,a.0,calc2));        
     }    
 
 }
