@@ -4,7 +4,7 @@ mod logger;
 pub mod recovery;
 
 use core::panic;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::{env, io, thread};
 use std::time::Duration;
 use std::fs::File;
@@ -48,6 +48,9 @@ fn read_dead_letter() {
 
     let recovery_sem = Arc::new(Semaphore::new(1));
 
+    // Average total time traker
+    let avg_time = Arc::new(RwLock::new((0,0)));
+
     let mut deadletter_writer = BufWriter::new(&deadletter_c);
     let mut seek = 0;
 
@@ -83,8 +86,9 @@ fn read_dead_letter() {
                     "p" => {
                         println!("Processing..");
                         let le = logger.clone();
+                        let avg_time_cl = avg_time.clone();
                         let sem_cl = recovery_sem.clone();
-                        orchestrator::orchestrate((&dead_transaction).to_string(), le,sem_cl);
+                        orchestrator::orchestrate((&dead_transaction).to_string(), le,sem_cl,avg_time_cl);
 
                         deadletter_writer.seek(SeekFrom::Start(seek)).expect("should move");
                         write!(deadletter_writer,"{},P\n",dead_transaction).unwrap();
@@ -158,7 +162,10 @@ fn main() {
             // Recovery proccess.
             let recovery_sem = Arc::new(Semaphore::new(1));
             start_recovery();
-            // ---
+            // --- 
+
+            // Average total time traker
+            let avg_time = Arc::new(RwLock::new((0,0)));
 
             let tracker_file = File::options().append(false).read(true).write(true).create(true).open(TRACKER);
             let tracker_reader;
@@ -195,7 +202,8 @@ fn main() {
                 tracker_writer.flush().unwrap();
                 let cl = logger.clone();
                 let sem_cl = recovery_sem.clone();
-                th.push(thread::spawn(move || orchestrator::orchestrate(transaction.trim().to_string(), cl,sem_cl)));
+                let avg_time_cl = avg_time.clone();
+                th.push(thread::spawn(move || orchestrator::orchestrate(transaction.trim().to_string(), cl,sem_cl, avg_time_cl)));
                 thread::sleep(Duration::from_secs(TIME_TO_SLEEP));
             }
             for t in th {

@@ -6,7 +6,7 @@ use crate::orchestrator::new_dead;
 
 const RECOVERY_FILE: &str = "recovery.txt";
 
-pub(crate) fn mark_transaction(transaction : &String, flag: &str){
+pub fn mark_transaction(transaction : &String, flag: &str){
 
     let recovery_file = File::options().read(true).write(true).create(true).open(RECOVERY_FILE);
     let mut recovery_reader;
@@ -52,7 +52,7 @@ pub(crate) fn mark_transaction(transaction : &String, flag: &str){
 }
 
 
-pub(crate) fn start_recovery() {
+pub fn start_recovery() {
     
     let recovery_file = File::options().read(true).write(true).create(true).open(RECOVERY_FILE);
     let mut recovery_reader;

@@ -3,7 +3,7 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::net::UdpSocket;
 use std::sync::{Arc, RwLock};
 use std::sync::Barrier;
-use std::thread;
+use std::{thread, time};
 use std::time::Duration;
 
 use std_semaphore::Semaphore;
@@ -71,12 +71,14 @@ fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<b
     barrier.wait();
 }
 
-pub fn orchestrate(msg: String, mut logger: Logger, recover_sem : Arc<Semaphore>) {
+pub fn orchestrate(msg: String, mut logger: Logger, recover_sem : Arc<Semaphore>, time_avg : Arc<RwLock<(u64,u64)>>) {
     let v: Vec<&str> = msg.split(",").collect();
     if v.len() != 4 {
         logger.log(format!("Error in format for message {}", v[0]).as_str(), "ERROR");
         return
     }
+
+    let start = time::Instant::now();
 
     // Log start operation
     recover_sem.acquire();
@@ -122,20 +124,20 @@ pub fn orchestrate(msg: String, mut logger: Logger, recover_sem : Arc<Semaphore>
     if let Ok(f) = flag.read() {
         if !*f {
             new_dead(msg.to_string());
-            println!("{} has failed. Direct to the DEAD LETTER!!!",&id);
+            logger.log(&format!("Transaction {} FAILED. Sending to Deadletter",id),"ERROR");
 
             recover_sem.acquire();
             mark_transaction(&msg,"DL");
             recover_sem.release();
         }else{
-            println!("Todo ok");
+            logger.log_info(format!("Transaction {} OK",id).to_string());
         }
         should_continue = *f;
     }
     if should_continue {
         
         barrier.wait(); // commit
-
+         
         recover_sem.acquire();
         mark_transaction(&msg,"OK");
         recover_sem.release();
@@ -145,5 +147,17 @@ pub fn orchestrate(msg: String, mut logger: Logger, recover_sem : Arc<Semaphore>
     for t in v {
         t.join().expect("will not fail");
     } //Ending method
-    logger.log_info(format!("[{}] finished orchestrate", id));
+    
+    logger.log_info(format!("[{}] finished orchestrate.", id));
+
+    let elapsed = start.elapsed();
+    
+    if let Ok(mut a) = time_avg.write() {
+        a.0 += 1;
+        a.1 += elapsed.as_secs();
+
+        logger.log_info(format!("{}/{} - Average Total Time: {:.2?}",a.1,a.0,a.1/a.0));        
+    }    
+
 }
+
