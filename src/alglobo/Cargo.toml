@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 std-semaphore = "0.1"
 chrono = "0.4.19"
+rand = "0.7"
