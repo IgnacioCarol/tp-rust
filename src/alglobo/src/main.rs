@@ -1,14 +1,16 @@
 mod orchestrator;
 mod leaders;
 mod logger;
-pub mod recovery;
+mod recovery;
+mod dead_letter;
 
 use core::panic;
 use std::sync::{Arc, RwLock};
-use std::{env, io, thread};
+use std::{env, thread};
 use std::time::Duration;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, stdin, Write};
+use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
+use dead_letter::read_dead_letter;
 use recovery::start_recovery;
 use std_semaphore::Semaphore;
 
@@ -20,7 +22,6 @@ const STATUS_INFO: &str = "INFO";
 const STATUS_ERROR: &str = "ERROR";
 const TIME_TO_SLEEP: u64 = 1;
 const TRANSACTIONS_FILE: &str = "transactions";
-const DEADLETTER_FILE: &str = "dead_letter";
 
 fn get_start_position(mut tracker_reader: BufReader<&File>) -> u64 {
     let mut start_position = 0;
@@ -32,99 +33,6 @@ fn get_start_position(mut tracker_reader: BufReader<&File>) -> u64 {
     start_position
 }
 
-fn read_dead_letter() {
-    let mut logger = Logger::new();
-
-    let deadletter = File::options().append(false).read(true).write(true).create(true).open(DEADLETTER_FILE);
-    let mut deadletter_reader;
-    let deadletter_c;
-    if let Ok(ref file) = deadletter {
-        deadletter_reader = BufReader::new(file);
-        deadletter_c  = file.try_clone().unwrap();
-    }else {
-        logger.log(format!("Error opening {}", DEADLETTER_FILE).as_str(), "ERROR");
-        return;
-    }
-
-    let recovery_sem = Arc::new(Semaphore::new(1));
-
-    // Average total time traker
-    let avg_time = Arc::new(RwLock::new((0,0)));
-
-    let mut deadletter_writer = BufWriter::new(&deadletter_c);
-    let mut seek = 0;
-
-    let mut line = "".to_string();
-    let mut dead_transaction = String::new();
-    let mut state= String::new();
-
-    let mut input_string = String::new();
-    let mut skipped = false;
-
-    let mut read_bytes = deadletter_reader.read_line(&mut line).unwrap();
-    while read_bytes > 0 && !skipped {
-        
-        if read_bytes >= 3 {
-            state = line[read_bytes-2..read_bytes-1].to_string();
-            dead_transaction = line[0..read_bytes-3].to_string();
-        }
-
-        if state == "F" {
-
-            print!("Transacción with state {} => {} | ", state, dead_transaction);
-            print!("Select an option: [P]rocess - [N]ext - [R]emove - [E]xit: ");
-            io::stdout().flush().unwrap();
-
-            loop {
-                // Input from user
-                input_string.clear();
-                stdin().read_line(&mut input_string)
-                .ok()
-                .expect("Failed to read line");
-
-              match (&input_string.to_lowercase()).as_str().trim_end() {
-                    "p" => {
-                        println!("Processing..");
-                        let le = logger.clone();
-                        let avg_time_cl = avg_time.clone();
-                        let sem_cl = recovery_sem.clone();
-                        orchestrator::orchestrate((&dead_transaction).to_string(), le,sem_cl,avg_time_cl);
-
-                        deadletter_writer.seek(SeekFrom::Start(seek)).expect("should move");
-                        write!(deadletter_writer,"{},P\n",dead_transaction).unwrap();
-                        deadletter_writer.flush().unwrap();
-                        break;
-                    },
-                    "n" => {
-                        println!("Ignoring transaction..");
-                        break;
-                    },
-                    "r" => {
-                        println!("Removing transaction..");
-                        deadletter_writer.seek(SeekFrom::Start(seek)).expect("should move");
-                        write!(deadletter_writer,"{},R\n",dead_transaction).unwrap();
-                        deadletter_writer.flush().unwrap();
-                        break;
-                    },
-                    "e" => {
-                        println!("Exiting the process of deadletter..");
-                        skipped = true;
-                        break;
-                    },
-                    &_ => {
-                        println!("{} is not valid. Only P/N/R/E keys are valid.. ",(&input_string.to_lowercase()).as_str().trim_end() );
-                    }
-                }
-            }
-        }
-
-        seek += read_bytes as u64;
-        line.clear();
-        state.clear();
-        dead_transaction.clear();
-        read_bytes = deadletter_reader.read_line(&mut line).unwrap();
-    }
-}
 
 fn main() {
     // Arguments format:  script_name [--deadletter | -D]

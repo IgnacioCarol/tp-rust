@@ -1,5 +1,4 @@
-use std::fs::File;
-use std::io::{BufWriter, Seek, SeekFrom, Write};
+
 use std::net::UdpSocket;
 use std::sync::{Arc, RwLock};
 use std::sync::Barrier;
@@ -8,6 +7,7 @@ use std::time::Duration;
 
 use std_semaphore::Semaphore;
 
+use crate::dead_letter::new_dead;
 use crate::recovery::mark_transaction;
 use crate::{Logger, recovery};
 
@@ -16,22 +16,6 @@ const BANK_ADDR: &str = "127.0.0.1:9001";
 const AER_ADDR: &str = "127.0.0.1:9002";
 const TTL: Duration = Duration::from_secs(2);
 const MAX_SIMULATE_WORK: u64 = 2;
-
-const DEADLETTER_FILE: &str = "dead_letter";
-
-pub(crate) fn new_dead(transaction: String){
-
-    let deadletter =  File::options().append(false).read(true).write(true).create(true).open(DEADLETTER_FILE);
-    if let Err(error) = deadletter {
-        println!("Error opening {} {}", DEADLETTER_FILE, error);
-        return;
-    }
-
-    let mut deadletter_writer = BufWriter::new(deadletter.unwrap());
-
-    let _ = deadletter_writer.seek(SeekFrom::End(0));
-    write!(deadletter_writer,"{},F\n",transaction).expect("Error al grabar dead transaction");
-}
 
 fn send_req(addr: String, amount: i64, barrier: Arc<Barrier>, flag: Arc<RwLock<bool>>, id: String) {
     barrier.wait();

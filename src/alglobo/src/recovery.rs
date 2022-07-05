@@ -2,7 +2,8 @@
 use std::fs::{File, self};
 use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 
-use crate::orchestrator::new_dead;
+use crate::dead_letter::new_dead;
+
 
 const RECOVERY_FILE: &str = "recovery.txt";
 
