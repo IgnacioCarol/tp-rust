@@ -1,0 +1,105 @@
+@startuml
+'https://plantuml.com/class-diagram
+
+struct Aerolinea {
+    socket: UdpSocket,
+    transaction_logger: Map,
+    message_sent: Arc<Semaphore>,
+}
+
+class Actor_Aerolinea {
+    amount: u64
+    Add(amountToAdd: u64)
+}
+
+class Actor_LoggerA {
+    path: String
+    Log(message: String, status: String)
+}
+
+struct Hotel {
+    socket: UdpSocket,
+    transaction_logger: Map,
+    message_sent: Arc<Semaphore>,
+}
+
+class Actor_Hotel {
+    amount: u64
+    Add(amountToAdd: u64)
+}
+
+class Actor_LoggerB {
+    path: String
+    Log(message: String, status: String)
+}
+
+struct Banco {
+    socket: UdpSocket,
+    transaction_logger: Map,
+    message_sent: Arc<Semaphore>,
+}
+
+class Actor_Banco {
+    amount: u64
+    Add(amountToAdd: u64)
+}
+
+class Actor_LoggerH {
+    path: String
+    Log(message: String, status: String)
+}
+
+struct main {
+}
+
+struct Logger {
+    log(message: String, status: String)
+    log_info(message: String)
+    change_leader()
+    change_path(id: u64)
+}
+
+class Orchestrator {
+    orchestrate(message: String)
+    send_req(address: String, amount: usize, barrier, flag, id):
+}
+
+struct Leader {
+    + leader()
+    + wake_me_up_when_september_ends()
+    - am_i_leader()
+    - get_leader_id()
+    - find_new()
+    - id_to_msg(header: u8)
+    - send_election()
+    - make_me_leader()
+    - step_down()
+    - responder()
+}
+
+class DeadLetter {
+    read_deadletter()
+    new_deadletter()
+}
+
+Leader <-- main
+Logger <-- main
+
+Actor_Aerolinea <-- Aerolinea
+Actor_LoggerA <-- Aerolinea
+
+Actor_Banco <-- Banco
+Actor_LoggerB <-- Banco
+
+Actor_Hotel <-- Hotel
+Actor_LoggerH <-- Hotel
+
+Aerolinea <.. Orchestrator: UdpSocket
+Banco <.. Orchestrator: UdpSocket
+Hotel <.. Orchestrator: UdpSocket
+Orchestrator <.. main: thread
+DeadLetter <.. main: Process
+DeadLetter <.. Orchestrator: Write
+
+
+@enduml
