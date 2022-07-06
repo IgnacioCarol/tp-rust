@@ -1,7 +1,7 @@
+use chrono::Local;
 use std::fs;
 use std::io::Write;
 use std::sync::Arc;
-use chrono::Local;
 use std_semaphore::Semaphore;
 
 const PATH: &str = "logger.txt";
@@ -38,9 +38,19 @@ impl Logger {
 
     pub fn log(&mut self, msg: &str, status: &str) {
         self.sem.acquire();
-        let mut file = fs::OpenOptions::new().write(true).append(true).create(true).open(self.path.as_str()).unwrap();
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .create(true)
+            .open(self.path.as_str())
+            .unwrap();
         let date = Local::now();
-        let msg = format!("{} || {}=> {}\n", date.format("%Y-%m-%d - %H:%M:%S"), status, msg);
+        let msg = format!(
+            "{} || {}=> {}\n",
+            date.format("%Y-%m-%d - %H:%M:%S"),
+            status,
+            msg
+        );
         file.write(msg.as_bytes()).expect("could not use logger");
         self.sem.release();
     }
