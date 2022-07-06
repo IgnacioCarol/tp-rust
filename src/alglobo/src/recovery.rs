@@ -5,7 +5,7 @@ use crate::dead_letter::new_dead;
 
 const RECOVERY_FILE: &str = "recovery.txt";
 
-pub fn mark_transaction(transaction: &String, flag: &str) {
+pub fn mark_transaction(transaction: &str, flag: &str) {
     let recovery_file = File::options()
         .read(true)
         .write(true)
@@ -21,7 +21,7 @@ pub fn mark_transaction(transaction: &String, flag: &str) {
         return;
     }
 
-    let target: Vec<&str> = transaction.split(",").collect();
+    let target: Vec<&str> = transaction.split(',').collect();
     let id_target = target[0].to_owned();
     let mut line = String::new();
 
@@ -32,7 +32,7 @@ pub fn mark_transaction(transaction: &String, flag: &str) {
         .read_line(&mut line)
         .expect("Cannot read file");
     while read_bytes > 0 {
-        let splitted: Vec<&str> = line.trim_end().split(",").collect();
+        let splitted: Vec<&str> = line.trim_end().split(',').collect();
         let id = splitted[0].to_owned();
 
         seek += read_bytes as u64;
@@ -53,7 +53,7 @@ pub fn mark_transaction(transaction: &String, flag: &str) {
     }
 
     let _ = recovery_writer.seek(SeekFrom::End(0));
-    write!(recovery_writer, "{},{}\n", transaction, flag)
+    writeln!(recovery_writer, "{},{}", transaction, flag)
         .expect("Error al grabar inicio de transaction");
     recovery_writer.flush().unwrap();
 }
@@ -64,14 +64,12 @@ pub fn start_recovery() {
         .write(true)
         .create(true)
         .open(RECOVERY_FILE);
-    let mut recovery_reader;
-
     if let Err(_e) = recovery_file {
         // LOG error
         return;
     }
 
-    recovery_reader = BufReader::new(recovery_file.unwrap());
+    let mut recovery_reader = BufReader::new(recovery_file.unwrap());
 
     let mut line = String::new();
     let mut status: String;
@@ -80,7 +78,7 @@ pub fn start_recovery() {
         .read_line(&mut line)
         .expect("Cannot read file");
     while read_bytes > 0 {
-        let splt: Vec<&str> = line.trim_end().split(",").collect();
+        let splt: Vec<&str> = line.trim_end().split(',').collect();
         status = splt[4].to_owned();
 
         if status == "--" {

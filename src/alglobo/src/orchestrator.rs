@@ -63,7 +63,7 @@ pub fn orchestrate(
     recover_sem: Arc<Semaphore>,
     time_avg: Arc<RwLock<(u64, u64)>>,
 ) {
-    let v: Vec<&str> = msg.split(",").collect();
+    let v: Vec<&str> = msg.split(',').collect();
     if v.len() != 4 {
         logger.log(
             format!("Error in format for message {}", v[0]).as_str(),
@@ -141,7 +141,7 @@ pub fn orchestrate(
             mark_transaction(&msg, "DL");
             recover_sem.release();
         } else {
-            logger.log_info(format!("Transaction {} OK", id).to_string());
+            logger.log_info(format!("Transaction {} OK", id));
         }
         should_continue = *f;
     }
@@ -165,7 +165,7 @@ pub fn orchestrate(
     if let Ok(mut a) = time_avg.write() {
         a.0 += 1;
         a.1 += elapsed.as_millis() as u64;
-        let calc1 = a.1 as f64 / 1000 as f64;
+        let calc1 = a.1 as f64 / 1000_f64;
         let calc2 = calc1 / ((a.0) as f64);
         logger.log_info(format!(
             "Total time: {:.2}s - Transactions: {} - Average Time: {:.2}s",

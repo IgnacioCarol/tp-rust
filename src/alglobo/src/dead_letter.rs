@@ -24,7 +24,7 @@ pub(crate) fn new_dead(transaction: String) {
     let mut deadletter_writer = BufWriter::new(deadletter.unwrap());
 
     let _ = deadletter_writer.seek(SeekFrom::End(0));
-    write!(deadletter_writer, "{},F\n", transaction).expect("Error al grabar dead transaction");
+    writeln!(deadletter_writer, "{},F", transaction).expect("Error al grabar dead transaction");
 }
 
 pub(crate) fn read_dead_letter() {
@@ -84,8 +84,7 @@ pub(crate) fn read_dead_letter() {
                 input_string.clear();
                 stdin()
                     .read_line(&mut input_string)
-                    .ok()
-                    .expect("Failed to read line");
+                    .ok();
 
                 match (&input_string.to_lowercase()).as_str().trim_end() {
                     "p" => {
@@ -103,7 +102,7 @@ pub(crate) fn read_dead_letter() {
                         deadletter_writer
                             .seek(SeekFrom::Start(seek))
                             .expect("should move");
-                        write!(deadletter_writer, "{},P\n", dead_transaction).unwrap();
+                        writeln!(deadletter_writer, "{},P", dead_transaction).unwrap();
                         deadletter_writer.flush().unwrap();
                         break;
                     }
@@ -116,7 +115,7 @@ pub(crate) fn read_dead_letter() {
                         deadletter_writer
                             .seek(SeekFrom::Start(seek))
                             .expect("should move");
-                        write!(deadletter_writer, "{},R\n", dead_transaction).unwrap();
+                        writeln!(deadletter_writer, "{},R", dead_transaction).unwrap();
                         deadletter_writer.flush().unwrap();
                         break;
                     }

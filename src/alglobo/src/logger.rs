@@ -51,7 +51,7 @@ impl Logger {
             status,
             msg
         );
-        file.write(msg.as_bytes()).expect("could not use logger");
+        let _ = file.write(msg.as_bytes()).unwrap();
         self.sem.release();
     }
     pub fn log_info(&mut self, msg: String) {

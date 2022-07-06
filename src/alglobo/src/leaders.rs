@@ -67,7 +67,7 @@ impl LeaderElection {
         if let Ok(leader_id) = self.last_leader_id.read() {
             li = *leader_id;
         }
-        return li == self.id;
+        li == self.id
     }
 
     pub fn wake_me_up_when_september_ends(&self) {
@@ -77,7 +77,7 @@ impl LeaderElection {
     fn get_leader_id(&self) -> usize {
         if let Ok(data) = self.leader_id.0.lock() {
             match data.deref() {
-                Some(number) => return number.clone(),
+                Some(number) => return *number,
                 _ => 1 + 1,
             };
         }
@@ -110,7 +110,7 @@ impl LeaderElection {
         if !*got_ok.unwrap().0 {
             self.make_me_leader()
         } else {
-            let _ = self
+            let _guard = self
                 .leader_id
                 .1
                 .wait_while(self.leader_id.0.lock().unwrap(), |leader_id| {
@@ -246,7 +246,7 @@ pub fn get_leader_election(id: usize, mut logger: Logger) -> LeaderElection {
     let le = LeaderElection::new(id, logger);
     let copy_le = le.clone();
     thread::spawn(move || team_member(copy_le, log));
-    return le;
+    le
 }
 
 fn team_member(mut leader: LeaderElection, mut logger: Logger) {
