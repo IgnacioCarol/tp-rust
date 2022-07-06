@@ -31,6 +31,7 @@ pub struct LeaderElection {
     id: usize,
     socket: UdpSocket,
     leader_id: Arc<(Mutex<Option<usize>>, Condvar)>,
+    // Common issue with clippy https://github.com/rust-lang/rust-clippy/issues/1516
     got_ok: Arc<(Mutex<bool>, Condvar)>,
     stop: Arc<(Mutex<bool>, Condvar)>,
     logger: Logger,
