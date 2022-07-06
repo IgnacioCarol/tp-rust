@@ -72,7 +72,7 @@ impl Handler<Log> for Logger {
             msg.0 .1,
             msg.0 .0
         );
-        file.write(msg.as_bytes()).expect("could not use logger");
+        let _ = file.write(msg.as_bytes()).unwrap();
     }
 }
 
@@ -200,7 +200,7 @@ impl AerSocket {
                     .expect("socket broken");
             } // commit
             "P" => {
-                let v: Vec<&str> = information.split(" ").collect();
+                let v: Vec<&str> = information.split(' ').collect();
                 let (id, amount) = (v[0], v[1].parse::<i64>().unwrap());
 
                 let mut success = true;
