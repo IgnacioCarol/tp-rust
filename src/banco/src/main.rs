@@ -261,17 +261,13 @@ async fn main() {
         transaction_logger: HashMap::new()
     }.start();
     logger
-        .send(Log(("socket started".to_string(), STATUS_INFO.to_string())))
-        .await
+        .try_send(Log(("socket started".to_string(), STATUS_INFO.to_string())))
         .unwrap();
-    let socket = UdpSocket::bind(ADDR).unwrap();
+    let socket = actix_rt::net::UdpSocket::bind(ADDR).await.unwrap();
     loop {
         let mut buf = [0; 1024];
-        let (size, from) = socket.recv_from(&mut buf).unwrap();
+        let (size, from) = socket.recv_from(&mut buf).await.unwrap();
         let msg = str::from_utf8(&buf[0..size]).unwrap().to_owned().clone();
-        let banco = actor_banco.clone();
-        actix_rt::spawn(async move {
-            banco.send(Process(msg, from)).await.unwrap();
-        }).await;
+        actor_banco.try_send(Process(msg, from)).unwrap();
     }
 }
