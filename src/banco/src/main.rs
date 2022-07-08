@@ -1,7 +1,7 @@
 extern crate actix;
 extern crate chrono;
 
-use actix::{Actor, Context, Handler, Message, Recipient};
+use actix::{Actor, AsyncContext, Context, Handler, Message, Recipient};
 use chrono::Local;
 use rand::{thread_rng, Rng};
 use std::collections::HashMap;
@@ -9,9 +9,6 @@ use std::fs;
 use std::io::Write;
 use std::net::{SocketAddr, UdpSocket};
 use std::str;
-use std::sync::{Arc, RwLock};
-use std::thread;
-use std_semaphore::Semaphore;
 
 const ADDR: &str = "127.0.0.1:9001";
 const STATUS_INFO: &str = "INFO";
@@ -23,12 +20,26 @@ const CHANCE_TO_ABORT: usize = 10;
 #[rtype(result = "i64")]
 struct Add(i64);
 
-#[derive(Message)]
-#[rtype(result = "i64")]
-struct Sub(i64);
+struct Prepare(String, SocketAddr);
 
-struct Clear();
-impl Message for Clear {
+impl Message for Prepare {
+    type Result = ();
+}
+struct Commit(String, SocketAddr);
+
+impl Message for Commit {
+    type Result = ();
+}
+
+struct Abort(String, SocketAddr);
+
+impl Message for Abort {
+    type Result = ();
+}
+
+struct Process(String, SocketAddr);
+
+impl Message for Process {
     type Result = ();
 }
 
@@ -39,20 +50,9 @@ impl Message for Log {
 }
 
 struct Logger {}
+
 impl Actor for Logger {
     type Context = Context<Self>;
-}
-
-impl Handler<Clear> for Logger {
-    type Result = ();
-
-    fn handle(&mut self, _msg: Clear, _ctx: &mut Self::Context) -> Self::Result {}
-}
-
-impl Handler<Clear> for Banco {
-    type Result = ();
-
-    fn handle(&mut self, _msg: Clear, _ctx: &mut Self::Context) -> Self::Result {}
 }
 
 impl Handler<Log> for Logger {
@@ -69,8 +69,8 @@ impl Handler<Log> for Logger {
         let msg = format!(
             "{} || {}=> {}\n",
             date.format("%Y-%m-%d - %H:%M:%S"),
-            msg.0 .1,
-            msg.0 .0
+            msg.0.1,
+            msg.0.0
         );
         let _ = file.write(msg.as_bytes()).unwrap();
     }
@@ -79,6 +79,8 @@ impl Handler<Log> for Logger {
 struct Banco {
     amount: i64,
     logger: Recipient<Log>,
+    transaction_logger: HashMap<String, (String, i64)>,
+    socket: UdpSocket,
 }
 
 impl Actor for Banco {
@@ -99,197 +101,152 @@ impl Handler<Add> for Banco {
     }
 }
 
-impl Handler<Sub> for Banco {
-    type Result = i64;
-    fn handle(&mut self, msg: Sub, _ctx: &mut Self::Context) -> Self::Result {
-        self.amount -= msg.0;
-        self.amount
+impl Handler<Commit> for Banco {
+    type Result = ();
+    fn handle(&mut self, msg: Commit, _ctx: &mut Self::Context) -> Self::Result {
+        let information = msg.0;
+        self.logger.do_send(Log((format!("being committed with id {}", information), STATUS_INFO.to_string()))).unwrap();
+        let mut result = "ok";
+        let amount = self.transaction_logger.get(information.as_str()).cloned();
+        match amount {
+            None => {
+                result = "fl";
+            }
+            Some(v) => {
+                if v.0 == "P" {
+                    self.transaction_logger.insert(information.to_string(), ("C".to_string(), v.1));
+                } else {
+                    self.logger.do_send(Log((
+                        format!(
+                            "message had the following status: {}, not being commited",
+                            v.0
+                        ),
+                        STATUS_INFO.to_string()))
+                    ).unwrap();
+                }
+            }
+        }
+        if result == "fl" {
+            self.logger.do_send(Log((
+                format!("id {} did not exist", information),
+                STATUS_ERROR.to_string(),
+            ))).unwrap();
+        }
+        self.socket
+            .send_to(result.as_bytes(), msg.1)
+            .expect("socket broken");
     }
 }
 
-struct BancoSocket {
-    socket: UdpSocket,
-    transaction_logger: Arc<RwLock<HashMap<String, (String, i64)>>>,
-    actor: Arc<Recipient<Add>>,
-    logger: Arc<Recipient<Log>>,
-    message_sent: Arc<Semaphore>,
+
+impl Handler<Prepare> for Banco {
+    type Result = ();
+
+    fn handle(&mut self, msg: Prepare, _ctx: &mut Self::Context) -> Self::Result {
+        let address = msg.1;
+        let information = msg.0.as_str();
+        let v: Vec<&str> = information.split(' ').collect();
+        let (id, amount) = (v[0], v[1].parse::<i64>().unwrap());
+
+        let mut success = true;
+        let value = self.transaction_logger.get(id).cloned();
+        match value {
+            None => {
+                if thread_rng().gen_range(0, 100) >= 100 - CHANCE_TO_ABORT {
+                    self.logger.do_send(Log((
+                        format!("failing transaction {}", id),
+                        STATUS_INFO.to_string(),
+                    ))).unwrap();
+                    self.transaction_logger.insert(id.to_string(), ("C".to_string(), amount));
+                    success = false;
+                } else {
+                    self.transaction_logger.insert(id.to_string(), ("P".to_string(), amount));
+                }
+            }
+            Some(v) => {
+                if v.0 == "A" {
+                    self.transaction_logger.insert(id.to_string(), ("P".to_string(), v.1));
+                }
+            }
+        }
+        if success {
+            self.logger.do_send(Log((
+                format!("preparing with id {} and amount {}", id, amount),
+                STATUS_INFO.to_string(),
+            ))).unwrap();
+            self.socket
+                .send_to("ok".as_bytes(), address)
+                .expect("socket broken");
+        } else {
+            self.logger.do_send(Log((format!("aborting with id {}", id), STATUS_ERROR.to_string()))).unwrap();
+            self.socket
+                .send_to("fl".as_bytes(), address)
+                .expect("socket broken");
+        }
+    }
 }
 
-impl BancoSocket {
-    fn new(
-        banco_actor: Recipient<Add>,
-        logger_actor: Recipient<Log>,
-        message_sent: Arc<Semaphore>,
-    ) -> BancoSocket {
-        BancoSocket {
-            socket: UdpSocket::bind(ADDR).unwrap(),
-            transaction_logger: Arc::new(RwLock::new(HashMap::new())),
-            actor: Arc::new(banco_actor),
-            logger: Arc::new(logger_actor),
-            message_sent,
+impl Handler<Abort> for Banco {
+    type Result = ();
+    fn handle(&mut self, msg: Abort, _ctx: &mut Self::Context) -> Self::Result {
+        let information = msg.0.as_str();
+        let mut was_added = true;
+        let value = self.transaction_logger.get(information).cloned();
+        match value {
+            None => {
+                was_added = false;
+            }
+            Some(v) => {
+                if v.0 == "A" {
+                    self.transaction_logger.insert(information.to_string(), ("A".to_string(), v.1));
+                }
+            }
         }
+        if !was_added {
+            self.logger.do_send(Log((
+                format!("transaction {} never was added", information),
+                STATUS_ERROR.to_string(),
+            ))).unwrap();
+            return;
+        }
+        self.logger.do_send(Log((
+            format!("aborting transaction {}", information),
+            STATUS_INFO.to_string(),
+        ))).unwrap();
+        self.socket
+            .send_to("ok".as_bytes(), msg.1)
+            .expect("socket broken");
     }
+}
 
-    fn clone(&self) -> BancoSocket {
-        BancoSocket {
-            socket: self.socket.try_clone().unwrap(),
-            transaction_logger: self.transaction_logger.clone(),
-            actor: self.actor.clone(),
-            logger: self.logger.clone(),
-            message_sent: self.message_sent.clone(),
-        }
-    }
-    fn responder(&mut self) {
-        loop {
-            let mut buf = [0; 1024];
-            let (size, from) = self.socket.recv_from(&mut buf).unwrap();
-            let mut c = self.clone();
-            let msg = str::from_utf8(&buf[0..size]).unwrap().to_owned().clone();
-            thread::spawn(move || c.process_message(msg, from));
-        }
-    }
-
-    fn process_message(&mut self, msg: String, address: SocketAddr) {
-        self.write_into_logger(
-            &format!("message received from {} is {}", address, msg),
-            STATUS_INFO,
-        );
-        let (intention, mut information) = msg.split_at(1);
+impl Handler<Process> for Banco {
+    type Result = ();
+    fn handle(&mut self, msg: Process, ctx: &mut Self::Context) -> Self::Result {
+        let message = msg.0;
+        let address = msg.1;
+        self.logger.do_send(Log((
+            format!("message received from {} is {}", address, message),
+            STATUS_INFO.to_string(),
+        ))).unwrap();
+        let (intention, mut information) = message.split_at(1);
         information = information.trim();
         match intention {
-            "C" => {
-                self.write_into_logger(
-                    &format!("being committed with id {}", information),
-                    STATUS_INFO,
-                );
-                let mut result = "ok";
-                if let Ok(mut data) = self.transaction_logger.write() {
-                    let amount = data.get(information).cloned();
-                    match amount {
-                        None => {
-                            result = "fl";
-                        }
-                        Some(v) => {
-                            if v.0 == "P" {
-                                data.insert(information.to_string(), ("C".to_string(), v.1));
-                                self.send_to_actor(v.1);
-                            } else {
-                                self.write_into_logger(
-                                    format!(
-                                        "message had the following status: {}, not being commited",
-                                        v.0
-                                    )
-                                    .as_str(),
-                                    STATUS_INFO,
-                                );
-                            }
-                        }
-                    }
-                }
-                if result == "fl" {
-                    self.write_into_logger(
-                        &format!("id {} did not exist", information),
-                        STATUS_ERROR,
-                    );
-                }
-                self.socket
-                    .send_to(result.as_bytes(), address)
-                    .expect("socket broken");
-            } // commit
+            "C" => { ctx.notify(Commit(information.to_string(), address)) }
             "P" => {
-                let v: Vec<&str> = information.split(' ').collect();
-                let (id, amount) = (v[0], v[1].parse::<i64>().unwrap());
-
-                let mut success = true;
-                if let Ok(mut data) = self.transaction_logger.write() {
-                    let value = data.get(id).cloned();
-                    match value {
-                        None => {
-                            if thread_rng().gen_range(0, 100) >= 100 - CHANCE_TO_ABORT {
-                                self.write_into_logger(
-                                    &format!("failing transaction {}", id),
-                                    STATUS_INFO,
-                                );
-                                data.insert(id.to_string(), ("C".to_string(), amount));
-                                success = false;
-                            } else {
-                                data.insert(id.to_string(), ("P".to_string(), amount));
-                            }
-                        }
-                        Some(v) => {
-                            if v.0 == "A" {
-                                data.insert(id.to_string(), ("P".to_string(), v.1));
-                            }
-                        }
-                    }
-                }
-                if success {
-                    self.write_into_logger(
-                        &format!("preparing with id {} and amount {}", id, amount),
-                        STATUS_INFO,
-                    );
-                    self.socket
-                        .send_to("ok".as_bytes(), address)
-                        .expect("socket broken");
-                } else {
-                    self.write_into_logger(&format!("aborting with id {}", id), STATUS_ERROR);
-                    self.socket
-                        .send_to("fl".as_bytes(), address)
-                        .expect("socket broken");
-                }
+                ctx.notify(Prepare(information.to_string(), address))
             }
-            "A" => {
-                let mut was_added = true;
-                if let Ok(mut data) = self.transaction_logger.write() {
-                    let value = data.get(information).cloned();
-                    match value {
-                        None => {
-                            was_added = false;
-                        }
-                        Some(v) => {
-                            if v.0 == "A" {
-                                data.insert(information.to_string(), ("A".to_string(), v.1));
-                            }
-                        }
-                    }
-                }
-                if !was_added {
-                    self.write_into_logger(
-                        &format!("transaction {} never was added", information),
-                        STATUS_ERROR,
-                    );
-                }
-                self.write_into_logger(
-                    &format!("aborting transaction {}", information),
-                    STATUS_INFO,
-                );
-                self.socket
-                    .send_to("ok".as_bytes(), address)
-                    .expect("socket broken");
+            "A" => {ctx.notify(Abort(information.to_string(), address))
             }
             &_ => {
-                self.write_into_logger(
-                    &format!("intention {} not recognized", intention),
-                    STATUS_ERROR,
-                );
+                self.logger.do_send(Log((
+                    format!("intention {} not recognized", intention),
+                    STATUS_ERROR.to_string(),
+                ))).unwrap();
                 self.socket
                     .send_to("fl".as_bytes(), address)
                     .expect("socket broken");
             }
         }
-        self.message_sent.release();
-    }
-
-    fn write_into_logger(&self, data: &str, status: &str) {
-        self.logger
-            .do_send(Log((data.to_string(), status.to_string())))
-            .expect("should be ok");
-    }
-
-    fn send_to_actor(&self, amount_to_add: i64) {
-        self.actor
-            .do_send(Add(amount_to_add))
-            .expect("should be ok");
     }
 }
 
@@ -300,21 +257,21 @@ async fn main() {
     let actor_banco = Banco {
         amount: 0,
         logger: l_1,
-    }
-    .start();
-    let a_h = actor_banco.clone().recipient();
-    let l_2 = logger.clone().recipient();
-    let sem = Arc::new(Semaphore::new(0));
-    let sc = sem.clone();
-    let mut b = BancoSocket::new(a_h, l_2, sc);
-    thread::spawn(move || b.responder());
+        socket: UdpSocket::bind("127.0.0.1:0").unwrap(),
+        transaction_logger: HashMap::new()
+    }.start();
     logger
         .send(Log(("socket started".to_string(), STATUS_INFO.to_string())))
         .await
         .unwrap();
+    let socket = UdpSocket::bind(ADDR).unwrap();
     loop {
-        sem.acquire();
-        logger.send(Clear()).await.unwrap(); // Necessary to make the messages on the thread be processed
-        actor_banco.send(Clear()).await.unwrap();
+        let mut buf = [0; 1024];
+        let (size, from) = socket.recv_from(&mut buf).unwrap();
+        let msg = str::from_utf8(&buf[0..size]).unwrap().to_owned().clone();
+        let banco = actor_banco.clone();
+        actix_rt::spawn(async move {
+            banco.send(Process(msg, from)).await.unwrap();
+        }).await;
     }
 }
