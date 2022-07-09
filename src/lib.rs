@@ -68,8 +68,8 @@ impl Handler<Log> for Logger {
         let msg = format!(
             "{} || {}=> {}\n",
             date.format("%Y-%m-%d - %H:%M:%S"),
-            msg.0.1,
-            msg.0.0
+            msg.0 .1,
+            msg.0 .0
         );
         let _ = file.write(msg.as_bytes()).unwrap();
     }
@@ -104,7 +104,12 @@ impl Handler<Commit> for Banco {
     type Result = ();
     fn handle(&mut self, msg: Commit, _ctx: &mut Self::Context) -> Self::Result {
         let information = msg.0;
-        self.logger.do_send(Log((format!("being committed with id {}", information), STATUS_INFO.to_string()))).unwrap();
+        self.logger
+            .do_send(Log((
+                format!("being committed with id {}", information),
+                STATUS_INFO.to_string(),
+            )))
+            .unwrap();
         let mut result = "ok";
         let amount = self.transaction_logger.get(information.as_str()).cloned();
         match amount {
@@ -113,30 +118,34 @@ impl Handler<Commit> for Banco {
             }
             Some(v) => {
                 if v.0 == "P" {
-                    self.transaction_logger.insert(information.to_string(), ("C".to_string(), v.1));
+                    self.transaction_logger
+                        .insert(information.to_string(), ("C".to_string(), v.1));
                 } else {
-                    self.logger.do_send(Log((
-                        format!(
-                            "message had the following status: {}, not being commited",
-                            v.0
-                        ),
-                        STATUS_INFO.to_string()))
-                    ).unwrap();
+                    self.logger
+                        .do_send(Log((
+                            format!(
+                                "message had the following status: {}, not being commited",
+                                v.0
+                            ),
+                            STATUS_INFO.to_string(),
+                        )))
+                        .unwrap();
                 }
             }
         }
         if result == "fl" {
-            self.logger.do_send(Log((
-                format!("id {} did not exist", information),
-                STATUS_ERROR.to_string(),
-            ))).unwrap();
+            self.logger
+                .do_send(Log((
+                    format!("id {} did not exist", information),
+                    STATUS_ERROR.to_string(),
+                )))
+                .unwrap();
         }
         self.socket
             .send_to(result.as_bytes(), msg.1)
             .expect("socket broken");
     }
 }
-
 
 impl Handler<Prepare> for Banco {
     type Result = ();
@@ -152,32 +161,44 @@ impl Handler<Prepare> for Banco {
         match value {
             None => {
                 if thread_rng().gen_range(0, 100) >= 100 - CHANCE_TO_ABORT {
-                    self.logger.do_send(Log((
-                        format!("failing transaction {}", id),
-                        STATUS_INFO.to_string(),
-                    ))).unwrap();
-                    self.transaction_logger.insert(id.to_string(), ("C".to_string(), amount));
+                    self.logger
+                        .do_send(Log((
+                            format!("failing transaction {}", id),
+                            STATUS_INFO.to_string(),
+                        )))
+                        .unwrap();
+                    self.transaction_logger
+                        .insert(id.to_string(), ("C".to_string(), amount));
                     success = false;
                 } else {
-                    self.transaction_logger.insert(id.to_string(), ("P".to_string(), amount));
+                    self.transaction_logger
+                        .insert(id.to_string(), ("P".to_string(), amount));
                 }
             }
             Some(v) => {
                 if v.0 == "A" {
-                    self.transaction_logger.insert(id.to_string(), ("P".to_string(), v.1));
+                    self.transaction_logger
+                        .insert(id.to_string(), ("P".to_string(), v.1));
                 }
             }
         }
         if success {
-            self.logger.do_send(Log((
-                format!("preparing with id {} and amount {}", id, amount),
-                STATUS_INFO.to_string(),
-            ))).unwrap();
+            self.logger
+                .do_send(Log((
+                    format!("preparing with id {} and amount {}", id, amount),
+                    STATUS_INFO.to_string(),
+                )))
+                .unwrap();
             self.socket
                 .send_to("ok".as_bytes(), address)
                 .expect("socket broken");
         } else {
-            self.logger.do_send(Log((format!("aborting with id {}", id), STATUS_ERROR.to_string()))).unwrap();
+            self.logger
+                .do_send(Log((
+                    format!("aborting with id {}", id),
+                    STATUS_ERROR.to_string(),
+                )))
+                .unwrap();
             self.socket
                 .send_to("fl".as_bytes(), address)
                 .expect("socket broken");
@@ -197,21 +218,26 @@ impl Handler<Abort> for Banco {
             }
             Some(v) => {
                 if v.0 == "A" {
-                    self.transaction_logger.insert(information.to_string(), ("A".to_string(), v.1));
+                    self.transaction_logger
+                        .insert(information.to_string(), ("A".to_string(), v.1));
                 }
             }
         }
         if !was_added {
-            self.logger.do_send(Log((
-                format!("transaction {} never was added", information),
-                STATUS_ERROR.to_string(),
-            ))).unwrap();
+            self.logger
+                .do_send(Log((
+                    format!("transaction {} never was added", information),
+                    STATUS_ERROR.to_string(),
+                )))
+                .unwrap();
             return;
         }
-        self.logger.do_send(Log((
-            format!("aborting transaction {}", information),
-            STATUS_INFO.to_string(),
-        ))).unwrap();
+        self.logger
+            .do_send(Log((
+                format!("aborting transaction {}", information),
+                STATUS_INFO.to_string(),
+            )))
+            .unwrap();
         self.socket
             .send_to("ok".as_bytes(), msg.1)
             .expect("socket broken");
@@ -223,24 +249,25 @@ impl Handler<Process> for Banco {
     fn handle(&mut self, msg: Process, ctx: &mut Self::Context) -> Self::Result {
         let message = msg.0;
         let address = msg.1;
-        self.logger.do_send(Log((
-            format!("message received from {} is {}", address, message),
-            STATUS_INFO.to_string(),
-        ))).unwrap();
+        self.logger
+            .do_send(Log((
+                format!("message received from {} is {}", address, message),
+                STATUS_INFO.to_string(),
+            )))
+            .unwrap();
         let (intention, mut information) = message.split_at(1);
         information = information.trim();
         match intention {
-            "C" => { ctx.notify(Commit(information.to_string(), address)) }
-            "P" => {
-                ctx.notify(Prepare(information.to_string(), address))
-            }
-            "A" => {ctx.notify(Abort(information.to_string(), address))
-            }
+            "C" => ctx.notify(Commit(information.to_string(), address)),
+            "P" => ctx.notify(Prepare(information.to_string(), address)),
+            "A" => ctx.notify(Abort(information.to_string(), address)),
             &_ => {
-                self.logger.do_send(Log((
-                    format!("intention {} not recognized", intention),
-                    STATUS_ERROR.to_string(),
-                ))).unwrap();
+                self.logger
+                    .do_send(Log((
+                        format!("intention {} not recognized", intention),
+                        STATUS_ERROR.to_string(),
+                    )))
+                    .unwrap();
                 self.socket
                     .send_to("fl".as_bytes(), address)
                     .expect("socket broken");
@@ -256,8 +283,9 @@ pub async fn run_actor(address: &str) {
         amount: 0,
         logger: l_1,
         socket: UdpSocket::bind("127.0.0.1:0").unwrap(),
-        transaction_logger: HashMap::new()
-    }.start();
+        transaction_logger: HashMap::new(),
+    }
+    .start();
     logger
         .try_send(Log(("socket started".to_string(), STATUS_INFO.to_string())))
         .unwrap();
