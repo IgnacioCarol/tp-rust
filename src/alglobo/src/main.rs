@@ -3,9 +3,12 @@ mod leaders;
 mod logger;
 mod orchestrator;
 mod recovery;
+mod file_handler;
 
 use core::panic;
+use std::process::exit;
 use dead_letter::read_dead_letter;
+use file_handler::FileHandler;
 use recovery::start_recovery;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
@@ -15,20 +18,19 @@ use std::{env, thread};
 use std_semaphore::Semaphore;
 
 use crate::leaders::get_leader_election;
-use crate::logger::Logger;
+use crate::logger::Logger; 
 
-const TRACKER: &str = "tracker";
+const TRACKER: &str = "tracker.txt";
 const STATUS_INFO: &str = "INFO";
 const STATUS_ERROR: &str = "ERROR";
 const TIME_TO_SLEEP: u64 = 1;
 const TRANSACTIONS_FILE: &str = "transactions.csv";
 
-fn get_start_position(mut tracker_reader: BufReader<&File>) -> u64 {
+fn get_start_position( tracker_file: &mut FileHandler) -> u64 {
     let mut start_position = 0;
-    let mut buffer: String = "".to_string();
-    let rb = tracker_reader.read_line(&mut buffer).unwrap();
-    if rb != 0 {
-        start_position = buffer.trim().parse().unwrap();
+
+    if let Some( pos ) = tracker_file.read(){
+        start_position = pos.trim().parse().unwrap();
     }
     start_position
 }
@@ -72,61 +74,51 @@ fn main() {
             // Average total time traker
             let avg_time = Arc::new(RwLock::new((0, 0)));
 
-            let tracker_file = File::options()
-                .append(false)
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(TRACKER);
-            let tracker_reader;
-            let tf;
-            if let Ok(ref file) = tracker_file {
-                tracker_reader = BufReader::new(file);
-                tf = file.try_clone().unwrap();
-            } else {
-                logger.log("Error with tracker file", STATUS_ERROR);
+            let mut result = FileHandler::new(TRACKER.to_string()) ;
+            if let Err(e) = result {
+                println!("Error");
                 return;
             }
-            let mut tracker_writer = BufWriter::new(&tf);
-            let pointer = get_start_position(tracker_reader);
+            let mut traker_file = result.unwrap();            
 
-            let transactions_file = File::open(TRANSACTIONS_FILE);
-            if let Err(error) = transactions_file {
-                logger.log(
-                    format!("Error opening {} {}", TRANSACTIONS_FILE, error).as_str(),
-                    STATUS_ERROR,
-                );
+            result = FileHandler::new(TRANSACTIONS_FILE.to_string()) ;
+            if let Err(e) = result {
+                println!("Error");
                 return;
             }
-            let mut transactions_reader = BufReader::new(transactions_file.unwrap());
-            transactions_reader
-                .seek(SeekFrom::Start(pointer))
-                .expect("Seeked incorrectly");
+            let mut transactions_file = result.unwrap();
+            
+            let pointer = get_start_position(&mut traker_file);
+            transactions_file.seek(pointer);
+        
             let mut total_bytes_read = usize::try_from(pointer).unwrap();
             let mut th = vec![];
             while le.leader() {
-                let mut transaction = "".to_string();
-                let bytes_read = transactions_reader.read_line(&mut transaction).unwrap();
-                if bytes_read == 0 {
+               
+    
+                if let Some(transaction) = transactions_file.read() {
+        
+                    total_bytes_read += transaction.len();
+                    traker_file.seek(0);
+                    traker_file.write(&total_bytes_read.to_string());
+
+                    let cl = logger.clone();
+                    let sem_cl = recovery_sem.clone();
+                    let avg_time_cl = avg_time.clone();
+                    th.push(thread::spawn(move || {
+                        orchestrator::orchestrate(
+                            transaction.trim().to_string(),
+                            cl,
+                            sem_cl,
+                            avg_time_cl,
+                        )
+                    }));
+                    thread::sleep(Duration::from_secs(TIME_TO_SLEEP));
+
+                }else{
                     should_end = true;
                     break;
                 }
-                total_bytes_read += bytes_read;
-                tracker_writer.seek(SeekFrom::Start(0)).unwrap();
-                write!(tracker_writer, "{}", total_bytes_read).unwrap();
-                tracker_writer.flush().unwrap();
-                let cl = logger.clone();
-                let sem_cl = recovery_sem.clone();
-                let avg_time_cl = avg_time.clone();
-                th.push(thread::spawn(move || {
-                    orchestrator::orchestrate(
-                        transaction.trim().to_string(),
-                        cl,
-                        sem_cl,
-                        avg_time_cl,
-                    )
-                }));
-                thread::sleep(Duration::from_secs(TIME_TO_SLEEP));
             }
             for t in th {
                 t.join().unwrap();
